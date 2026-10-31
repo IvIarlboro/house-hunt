@@ -51,6 +51,25 @@ function absDate(label, now = new Date()) {
   return label;
 }
 
+// Freddie Mac's weekly mortgage survey (published Thursdays). Checked about twice a day;
+// the published data only changes when a new week's numbers come out.
+async function fetchRates(prev) {
+  if (prev?.fetchedAt && Date.now() - Date.parse(prev.fetchedAt) < 12 * 3600e3) return prev;
+  try {
+    const r = await fetch('https://www.freddiemac.com/pmms/docs/PMMS_history.csv', { headers: { 'User-Agent': 'Mozilla/5.0' } });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const rows = (await r.text()).trim().split(/\r?\n/).slice(1).map((l) => l.split(',')).filter((c) => c[1]);
+    const iso = (d) => { const [m, dd, y] = d.split('/'); return `${y}-${m.padStart(2, '0')}-${dd.padStart(2, '0')}`; };
+    const last = rows.at(-1), before = rows.at(-2);
+    const n = (x) => (x === undefined || x === '' ? null : +x);
+    return {
+      source: 'Freddie Mac weekly survey', date: iso(last[0]),
+      r30: n(last[1]), r15: n(last[3]), r30Prev: before ? n(before[1]) : null, r15Prev: before ? n(before[3]) : null,
+      fetchedAt: new Date().toISOString(),
+    };
+  } catch (e) { log('rates fetch failed: ' + e.message); return prev || null; }
+}
+
 function git(...a) {
   return execFileSync('git', ['-C', REPO, '-c', 'credential.helper=', '-c', 'credential.helper=manager', ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
@@ -157,7 +176,9 @@ async function main() {
     });
     if (ch.length) diffs.push(`${l.id}:${ch.join(',')}`);
   }
-  const body = { portalUrl: PORTAL_URL, listings: pubListings, unavailable: [...unavailable].sort() };
+  const rates = await fetchRates(state.rates);
+  const { fetchedAt, ...pubRates } = rates || {};
+  const body = { portalUrl: PORTAL_URL, rates: rates ? pubRates : null, listings: pubListings, unavailable: [...unavailable].sort() };
   const hash = createHash('sha256').update(JSON.stringify(body)).digest('hex');
 
   const changed = hash !== state.hash || !existsSync(encPath);
@@ -165,7 +186,7 @@ async function main() {
     const payload = { v: 1, updatedAt: nowIso, source: 'REcolorado client portal', ...body };
     writeJson(encPath, await encryptJson(key, payload));
   }
-  state = { hash, lastCheck: nowIso, listings: next };
+  state = { hash, lastCheck: nowIso, rates, listings: next };
   writeJson(STATE, state);
 
   const summary = `checked ${listings.length} listings (+${unavailable.length} unavailable), details ${todo.length}, ${changed ? 'CHANGED' : 'no change'}${changes.length ? ': ' + changes.slice(0, 8).join('; ') : ''}${diffs.length ? ' | fields: ' + diffs.slice(0, 8).join(' ') : ''}`;

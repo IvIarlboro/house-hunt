@@ -53,20 +53,36 @@
     showOff: LS.get('hh-hideOff') !== '1', showLow: LS.get('hh-showLow') === '1', q: '', prevVisit: LS.get('hh-lastVisit'), openRatings: new Set(),
   };
   const defaultShared = () => ({ v: 1, users: [], weights: { ...DEFAULT_WEIGHTS }, ratings: {}, notes: [] });
-  // Payment estimate defaults: Freddie Mac 30-yr fixed weekly average (excellent credit, ~20% down) on Oct 29 2026,
-  // and a Colorado homeowners-insurance figure toward the high end of 2026 state averages for this price range.
-  const DEFAULT_LOAN = { rate: 7.24, termYears: 30, downPct: 20, insYear: 4000, rateNote: 'Freddie Mac 30-yr average, Oct 29 2026' };
+  // Payment estimate. Rates come from Freddie Mac's weekly survey (excellent credit, ~20% down), refreshed by
+  // the home PC; the owner can add a lender quote that becomes the default. Insurance default sits toward the
+  // high end of 2026 Colorado averages for this price range.
+  const FALLBACK_RATES = { source: 'Freddie Mac weekly survey', date: '2026-10-29', r30: 7.24, r15: 6.6 };
+  const DEFAULT_LOAN = { downPct: 20, insYear: 4000, customRate: null, customTerm: 30, customNote: '' };
   const loan = () => ({ ...DEFAULT_LOAN, ...(S.shared?.prefs?.loan || {}) });
+  const ratesNow = () => S.data?.rates || FALLBACK_RATES;
+  function loanOptions() {
+    const R = ratesNow(), L = loan();
+    const opts = [];
+    if (L.customRate) opts.push({ k: 'quote', rate: +L.customRate, term: +L.customTerm || 30, label: `Your quote · ${L.customTerm || 30}-yr ${(+L.customRate).toFixed(3).replace(/0+$/, '')}%` });
+    if (R.r30) opts.push({ k: 'r30', rate: R.r30, term: 30, label: `30-yr fixed · ${R.r30}% avg` });
+    if (R.r30) opts.push({ k: 'r30pt', rate: +(R.r30 - 0.25).toFixed(2), term: 30, label: `30-yr, 1 point paid · ~${(R.r30 - 0.25).toFixed(2)}%`, note: '1 discount point costs 1% of the loan upfront and usually trims about 0.25%' });
+    if (R.r15) opts.push({ k: 'r15', rate: R.r15, term: 15, label: `15-yr fixed · ${R.r15}% avg` });
+    return opts;
+  }
+  function loanChoice() {
+    const opts = loanOptions();
+    return opts.find((o) => o.k === LS.get('hh-loanOpt')) || opts[0];
+  }
   function payment(l) {
-    const L = loan();
+    const L = loan(), O = loanChoice(); if (!O) return null;
     const price = l.price; if (!price) return null;
     const down = price * L.downPct / 100, principal = price - down;
-    const r = L.rate / 100 / 12, n = L.termYears * 12;
+    const r = O.rate / 100 / 12, n = O.term * 12;
     const pi = r ? principal * r / (1 - Math.pow(1 + r, -n)) : principal / n;
     const tax = (taxOf(l) || 0) / 12, ins = L.insYear / 12;
     const hoaYr = parseFloat(String(l.detail?.fields?.['Total Annual HOA Fees'] || '').replace(/[$,]/g, '')) || 0;
     const hoa = hoaYr / 12;
-    return { total: pi + tax + ins + hoa, pi, tax, ins, hoa, down, L };
+    return { total: pi + tax + ins + hoa, pi, tax, ins, hoa, down, L, O };
   }
   // Owner check: the owner's name and the rating weights are guarded by an owner PIN.
   // The PIN's PBKDF2 hash lives inside the encrypted shared file; a verified device keeps the hash locally.
@@ -350,6 +366,8 @@
         ${tile('Listing to close (median)', mk.dToClose == null ? '—' : `${Math.round(mk.dToClose)} days`, `${mk.sold} sold`)}
         ${tile('Active with price cuts', `${mk.cuts} of ${mk.act}`, '')}
         ${tile('Sold $/sqft (median)', mk.soldPsf ? `$${Math.round(mk.soldPsf)}` : '—', 'per total sqft')}
+        ${(() => { const R = ratesNow(); const ch = R.r30 != null && R.r30Prev != null ? R.r30 - R.r30Prev : null;
+          return tile('30-yr rate (Freddie Mac)', R.r30 != null ? `${R.r30}%` : '—', `${ch == null ? '' : (ch > 0 ? '▲ ' : ch < 0 ? '▼ ' : '') + Math.abs(ch).toFixed(2) + ' this week · '}15-yr ${R.r15 ?? '—'}% · ${R.date}`); })()}
       </div>
       <p class="muted small">Only the houses Brooke sent you, not the whole MLS${mk.enough ? '' : ', so treat it as a rough read'}. Concessions entered on sold houses make "sold vs list" truer. "Leans to sellers" means the median sale was at list or above and contracts came within 3 weeks; "Leans to buyers" means 2.5%+ under list or 45+ days to contract.</p>
     </details>`;
@@ -444,7 +462,7 @@
           if (/closed|sold/i.test(l.status || '')) return '';
           const p = payment(l); if (!p) return '';
           return `<div class="pay"><span>≈ <b>${money(p.total)}/mo</b> · <b>${money(p.down)}</b> down (${p.L.downPct}%)</span>
-            <span class="muted">P&amp;I ${money(p.pi)} at ${p.L.rate}% · tax ${money(p.tax)} · insurance ~${money(p.ins)}${p.hoa ? ` · HOA ${money(p.hoa)}` : ''}</span></div>`;
+            <span class="muted">P&amp;I ${money(p.pi)} at ${p.O.rate}% ${p.O.term}-yr · tax ${money(p.tax)} · insurance ~${money(p.ins)}${p.hoa ? ` · HOA ${money(p.hoa)}` : ''}</span></div>`;
         })()}
         ${saleBlock(l, canEdit)}
         ${(() => { const r = room(l, S.mk); return r ? `<div class="room room-${r.level.toLowerCase()}" title="How much room there may be to offer under list. Not part of the rating."><b>Negotiating room: ${r.level}</b>${r.why.length ? ' · ' + esc(r.why.join(' · ')) : ''}</div>` : ''; })()}
@@ -529,6 +547,8 @@
     $('#search').value = S.q;
     $('#showOff').checked = S.showOff;
     $('#sort').value = S.sort;
+    const lo = loanOptions(), lc = loanChoice();
+    $('#loanOpt').innerHTML = lo.map((o) => `<option value="${o.k}" ${o === lc ? 'selected' : ''} ${o.note ? `title="${esc(o.note)}"` : ''}>${esc(o.label)}</option>`).join('');
     $('#clearFilters').hidden = !(S.q || !S.showOff);
     $('#whoBtn').textContent = S.user || 'Pick your name';
     $('#updated').textContent = `Listings changed ${ago(S.data.updatedAt)} · checked every 10 min`;
@@ -562,8 +582,9 @@
     $('#saveWeights').disabled = !S.token || !own;
     $('#resetWeights').disabled = !own;
     const L = loan();
-    for (const [id, v] of [['loanRate', L.rate], ['loanTerm', L.termYears], ['loanDown', L.downPct], ['loanIns', L.insYear]]) { $('#' + id).value = v; $('#' + id).disabled = !own; }
-    $('#loanNote').textContent = `Rate source: ${L.rateNote || 'set by ' + (ownerName() || 'owner')}.`;
+    for (const [id, v] of [['loanRate', L.customRate ?? ''], ['loanTerm', L.customTerm || 30], ['loanDown', L.downPct], ['loanIns', L.insYear]]) { $('#' + id).value = v; $('#' + id).disabled = !own; }
+    const R = ratesNow();
+    $('#loanNote').textContent = `Freddie Mac week of ${R.date}: 30-yr ${R.r30}%, 15-yr ${R.r15}% (updates on its own).${L.customRate ? ` Your quote ${L.customNote ? '(' + L.customNote + ')' : ''} is the default loan.` : ''}`;
     $('#saveLoan').disabled = !S.token || !own;
     $('#tokenForm').hidden = !!S.token && !own;
   }
@@ -688,15 +709,18 @@
       try { await updateShared((d) => { d.weights = w; d.prefs = { ...(d.prefs || {}), ageDir }; }, 'Change rating weights'); settingsMsg('Weights saved.', 'ok'); }
       catch (err) { settingsMsg(err.message, 'err'); }
     });
+    $('#loanOpt').addEventListener('change', (e) => { LS.set('hh-loanOpt', e.target.value); render(); });
     $('#saveLoan').addEventListener('click', async () => {
       if (!isOwner()) { settingsMsg(`Only ${ownerName() || 'the owner'} can change the payment assumptions.`, 'err'); return; }
-      const v = (id, lo, hi) => { const n = parseFloat($('#' + id).value); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : null; };
-      const next = { rate: v('loanRate', 0, 20), termYears: v('loanTerm', 5, 40), downPct: v('loanDown', 0, 100), insYear: v('loanIns', 0, 50000) };
-      if (Object.values(next).some((x) => x == null)) { settingsMsg('Fill in all four payment numbers.', 'err'); return; }
-      const changedRate = next.rate !== loan().rate;
+      const v = (id, lo, hi) => { const raw = $('#' + id).value.trim(); if (raw === '') return null; const n = parseFloat(raw); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : NaN; };
+      const next = { downPct: v('loanDown', 0, 100), insYear: v('loanIns', 0, 50000), customRate: v('loanRate', 0, 20), customTerm: v('loanTerm', 5, 40) || 30 };
+      if (next.downPct == null || next.insYear == null || Object.values(next).some((x) => Number.isNaN(x))) { settingsMsg('Down % and insurance are required; the quoted rate can be left blank.', 'err'); return; }
+      const changedRate = next.customRate !== (loan().customRate ?? null);
+      next.customNote = next.customRate ? (changedRate ? `entered by ${S.user} on ${new Date().toLocaleDateString()}` : loan().customNote) : '';
       try {
-        await updateShared((d) => { d.prefs = { ...(d.prefs || {}), loan: { ...next, rateNote: changedRate ? `set by ${S.user} on ${new Date().toLocaleDateString()}` : loan().rateNote } }; }, 'Change payment assumptions');
-        renderSettings(); settingsMsg('Payment assumptions saved.', 'ok');
+        await updateShared((d) => { d.prefs = { ...(d.prefs || {}), loan: next }; }, 'Change payment assumptions');
+        if (changedRate && next.customRate) LS.set('hh-loanOpt', 'quote');
+        renderSettings(); render(); settingsMsg('Payment assumptions saved.', 'ok');
       } catch (err) { settingsMsg(err.message, 'err'); }
     });
     $('#resetWeights').addEventListener('click', () => { for (const i of $$('#weights input')) i.value = DEFAULT_WEIGHTS[i.dataset.w]; $('#ageDir').value = 'newer'; updateWTotal(); });
