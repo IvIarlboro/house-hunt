@@ -101,6 +101,18 @@ details[open] > summary::before { content: "▾ "; }
 .room-high { border-left-color: var(--good); background: color-mix(in srgb, var(--good) 10%, var(--surface)); }
 .room-medium { border-left-color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, var(--surface)); }
 .card.low { opacity: .6; }
+button.score { border: 0; font-family: inherit; cursor: pointer; padding: 0; line-height: 1.1; }
+button.score:hover { outline: 3px solid rgb(255 255 255 / .7); }
+.pay { font-size: 14px; display: grid; gap: 2px; }
+.pay .muted { font-size: 12px; }
+.how { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 13px; }
+.how h4 { margin: 0 0 4px; font-size: 13px; }
+.how ul { margin: 0 0 8px; padding-left: 18px; color: var(--muted); }
+.how-w { border-collapse: collapse; width: 100%; font-size: 12px; }
+.how-w th, .how-w td { text-align: left; padding: 2px 6px; border-bottom: 1px solid var(--line); }
+.how-w td:nth-child(n+2), .how-w th:nth-child(n+2) { text-align: right; font-variant-numeric: tabular-nums; }
+.loan { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin-bottom: 8px; }
+.loan label { display: grid; gap: 2px; font-size: 13px; color: var(--muted); }
 .low-note { margin: 12px 0 0; font-size: 14px; color: var(--muted); }
 .ph-open { all: unset; display: block; width: 100%; height: 100%; cursor: zoom-in; position: relative; }
 .ph-open img { width: 100%; height: 100%; object-fit: cover; display: block; }

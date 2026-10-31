@@ -53,6 +53,21 @@
     showOff: LS.get('hh-hideOff') !== '1', showLow: LS.get('hh-showLow') === '1', q: '', prevVisit: LS.get('hh-lastVisit'), openRatings: new Set(),
   };
   const defaultShared = () => ({ v: 1, users: [], weights: { ...DEFAULT_WEIGHTS }, ratings: {}, notes: [] });
+  // Payment estimate defaults: Freddie Mac 30-yr fixed weekly average (excellent credit, ~20% down) on Oct 29 2026,
+  // and a Colorado homeowners-insurance figure toward the high end of 2026 state averages for this price range.
+  const DEFAULT_LOAN = { rate: 7.24, termYears: 30, downPct: 20, insYear: 4000, rateNote: 'Freddie Mac 30-yr average, Oct 29 2026' };
+  const loan = () => ({ ...DEFAULT_LOAN, ...(S.shared?.prefs?.loan || {}) });
+  function payment(l) {
+    const L = loan();
+    const price = l.price; if (!price) return null;
+    const down = price * L.downPct / 100, principal = price - down;
+    const r = L.rate / 100 / 12, n = L.termYears * 12;
+    const pi = r ? principal * r / (1 - Math.pow(1 + r, -n)) : principal / n;
+    const tax = (taxOf(l) || 0) / 12, ins = L.insYear / 12;
+    const hoaYr = parseFloat(String(l.detail?.fields?.['Total Annual HOA Fees'] || '').replace(/[$,]/g, '')) || 0;
+    const hoa = hoaYr / 12;
+    return { total: pi + tax + ins + hoa, pi, tax, ins, hoa, down, L };
+  }
   // Owner check: the owner's name and the rating weights are guarded by an owner PIN.
   // The PIN's PBKDF2 hash lives inside the encrypted shared file; a verified device keeps the hash locally.
   const ownerName = () => S.shared?.owner?.name || null;
@@ -372,6 +387,21 @@
     return chips.join('');
   }
 
+  function howScoring() {
+    const w = S.shared?.weights || DEFAULT_WEIGHTS;
+    const tot = ITEMS.reduce((a, it) => a + Math.max(0, +w[it.k] || 0), 0) || 1;
+    const rows = byWeight().map((it) => `<tr><td>${esc(it.label)}</td><td>${+w[it.k] || 0}</td><td>${(((+w[it.k] || 0) / tot) * 100).toFixed(0)}%</td></tr>`).join('');
+    return `<div class="how"><h4>How scoring works</h4>
+      <ul>
+        <li>Each item earns part of its points. The rating is the total, scaled to 100.</li>
+        <li>"Auto" items are read from the listing. Picking a value in the menu overrides it for everyone, and shows who set it.</li>
+        <li>Size, $/sqft, taxes and year built are scored against the rest of your list: the best house on the list gets full points.</li>
+        <li>Houses under ${LOW_SCORE} are hidden unless they're Favorites. Only ${esc(ownerName() || 'the owner')} can change the weights.</li>
+      </ul>
+      <table class="how-w"><thead><tr><th>Item</th><th>Points</th><th>Share</th></tr></thead><tbody>${rows}</tbody></table>
+    </div>`;
+  }
+
   function rateRows(l, ev, canEdit) {
     return byWeight().map((it) => {
       const r = ev.items[it.k];
@@ -406,17 +436,23 @@
           ${drop ? `<span class="badge drop">Price ↓ ${money(drop)}</span>` : ''}
           ${off ? `<span class="badge off">${esc(l.offPortal ? 'Off portal' : /closed/i.test(l.status || '') ? 'Sold' : l.status)}</span>` : ''}
         </div>
-        <div class="score" style="background:${scoreColor(ev.total)}" title="Rating out of 100">${ev.total}<small>/100</small></div>
+        <button class="score" type="button" data-open-rating="${esc(l.id)}" style="background:${scoreColor(ev.total)}" title="Rating out of 100. Tap for the breakdown.">${ev.total}<small>/100</small></button>
       </div>
       <div class="body">
         <div class="price-row"><span class="price">${money(l.price)}</span><span class="psf">${ev.items.psf.label} · ${ev.items.size.label} fin</span></div>
+        ${(() => {
+          if (/closed|sold/i.test(l.status || '')) return '';
+          const p = payment(l); if (!p) return '';
+          return `<div class="pay"><span>≈ <b>${money(p.total)}/mo</b> · <b>${money(p.down)}</b> down (${p.L.downPct}%)</span>
+            <span class="muted">P&amp;I ${money(p.pi)} at ${p.L.rate}% · tax ${money(p.tax)} · insurance ~${money(p.ins)}${p.hoa ? ` · HOA ${money(p.hoa)}` : ''}</span></div>`;
+        })()}
         ${saleBlock(l, canEdit)}
         ${(() => { const r = room(l, S.mk); return r ? `<div class="room room-${r.level.toLowerCase()}" title="How much room there may be to offer under list. Not part of the rating."><b>Negotiating room: ${r.level}</b>${r.why.length ? ' · ' + esc(r.why.join(' · ')) : ''}</div>` : ''; })()}
         <div class="addr"><a href="${waze}" target="_blank" rel="noopener" title="Open in Waze">${esc(l.address)}</a><div class="facts">${esc(l.city || '')}</div></div>
         <div class="facts">${l.beds ?? '?'} bd · ${l.baths ?? '?'} ba · ${l.sqftTotal ? l.sqftTotal.toLocaleString() + ' total sqft' : ''} · Taxes ${money(taxOf(l))}${l.detail?.fields?.Cooling ? ' · ' + esc(l.detail.fields.Cooling) : ''}</div>
         <div class="chips"><span class="chip ${rvCls}">RV: ${esc(rv.label)}</span>${highlights(l)}</div>
         ${rv.why || rv.ev ? `<div class="facts">${esc(rv.why ? rv.why : rv.ev)}</div>` : ''}
-        <details ${S.openRatings.has(l.id) ? 'open' : ''} data-rating="${esc(l.id)}"><summary>Rating breakdown</summary><div class="rate">${rateRows(l, ev, canEdit)}</div></details>
+        <details ${S.openRatings.has(l.id) ? 'open' : ''} data-rating="${esc(l.id)}"><summary>Rating breakdown</summary><div class="rate">${rateRows(l, ev, canEdit)}</div>${howScoring()}</details>
         <div class="notes">
           ${portalNotes.map((n) => `<div class="note portal"><div class="meta"><span>Portal note${n.date ? ' · ' + esc(n.date) : ''}</span></div>${esc(n.text)}</div>`).join('')}
           ${sharedNotes.map((n) => `<div class="note"><div class="meta"><span>${esc(n.by)} · ${esc(when(n.at))}</span>${n.by === S.user && canEdit ? `<button class="btn link" data-del-note="${esc(n.id)}">Delete</button>` : ''}</div>${esc(n.text)}</div>`).join('')}
@@ -484,6 +520,7 @@
     const key = {
       score: (x) => -evaluate(x.l, rg).total, price: (x) => x.l.price ?? 1e12, psf: (x) => psfOf(x.l) ?? 1e9,
       size: (x) => -(sizeOf(x.l) || 0), tax: (x) => taxOf(x.l) ?? 1e9, newest: (x) => -Date.parse(x.l.firstSeen || 0),
+      payment: (x) => payment(x.l)?.total ?? 1e9,
       room: (x) => -(room(x.l, S.mk)?.pts ?? -99),
     }[S.sort] || ((x) => 0);
     list.sort((a, b) => key(a) - key(b));
@@ -524,6 +561,10 @@
     $('#tokenState').textContent = S.token ? 'Saving is on. A write token is stored (encrypted).' : 'Saving is off. Paste a write token to turn it on.';
     $('#saveWeights').disabled = !S.token || !own;
     $('#resetWeights').disabled = !own;
+    const L = loan();
+    for (const [id, v] of [['loanRate', L.rate], ['loanTerm', L.termYears], ['loanDown', L.downPct], ['loanIns', L.insYear]]) { $('#' + id).value = v; $('#' + id).disabled = !own; }
+    $('#loanNote').textContent = `Rate source: ${L.rateNote || 'set by ' + (ownerName() || 'owner')}.`;
+    $('#saveLoan').disabled = !S.token || !own;
     $('#tokenForm').hidden = !!S.token && !own;
   }
   function updateWTotal() {
@@ -549,7 +590,14 @@
     $('#showOff').addEventListener('change', (e) => { S.showOff = e.target.checked; LS.set('hh-hideOff', S.showOff ? '0' : '1'); render(); });
     $('#sort').addEventListener('change', (e) => { S.sort = e.target.value; LS.set('hh-sort', S.sort); render(); });
     $('#lowNote').addEventListener('click', (e) => { if (e.target.id !== 'lowToggle') return; S.showLow = !S.showLow; LS.set('hh-showLow', S.showLow ? '1' : '0'); render(); });
-    $('#cards').addEventListener('click', (e) => { const b = e.target.closest('[data-gal]'); if (b) openGallery(b.dataset.gal); });
+    $('#cards').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-gal]'); if (b) { openGallery(b.dataset.gal); return; }
+      const s = e.target.closest('[data-open-rating]');
+      if (s) {
+        const d = $(`details[data-rating="${CSS.escape(s.dataset.openRating)}"]`);
+        if (d) { d.open = true; S.openRatings.add(s.dataset.openRating); d.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+      }
+    });
     $('#galPrev').addEventListener('click', () => drawGal(-1));
     $('#galNext').addEventListener('click', () => drawGal(1));
     $('#galClose').addEventListener('click', () => $('#galDlg').close());
@@ -639,6 +687,17 @@
       const ageDir = $('#ageDir').value === 'older' ? 'older' : 'newer';
       try { await updateShared((d) => { d.weights = w; d.prefs = { ...(d.prefs || {}), ageDir }; }, 'Change rating weights'); settingsMsg('Weights saved.', 'ok'); }
       catch (err) { settingsMsg(err.message, 'err'); }
+    });
+    $('#saveLoan').addEventListener('click', async () => {
+      if (!isOwner()) { settingsMsg(`Only ${ownerName() || 'the owner'} can change the payment assumptions.`, 'err'); return; }
+      const v = (id, lo, hi) => { const n = parseFloat($('#' + id).value); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : null; };
+      const next = { rate: v('loanRate', 0, 20), termYears: v('loanTerm', 5, 40), downPct: v('loanDown', 0, 100), insYear: v('loanIns', 0, 50000) };
+      if (Object.values(next).some((x) => x == null)) { settingsMsg('Fill in all four payment numbers.', 'err'); return; }
+      const changedRate = next.rate !== loan().rate;
+      try {
+        await updateShared((d) => { d.prefs = { ...(d.prefs || {}), loan: { ...next, rateNote: changedRate ? `set by ${S.user} on ${new Date().toLocaleDateString()}` : loan().rateNote } }; }, 'Change payment assumptions');
+        renderSettings(); settingsMsg('Payment assumptions saved.', 'ok');
+      } catch (err) { settingsMsg(err.message, 'err'); }
     });
     $('#resetWeights').addEventListener('click', () => { for (const i of $$('#weights input')) i.value = DEFAULT_WEIGHTS[i.dataset.w]; $('#ageDir').value = 'newer'; updateWTotal(); });
     $('#tokenForm').addEventListener('submit', async (e) => {
