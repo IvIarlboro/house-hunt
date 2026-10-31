@@ -1,0 +1,450 @@
+'use strict';
+// House Hunt — static, passphrase-encrypted tracker. Data files live in docs/data/ of the GitHub repo:
+//   meta.json (KDF salt, public), listings.enc.json (written by the refresh job),
+//   shared.enc.json (people, weights, ratings, notes — written here), token.enc.json (shared write token).
+(() => {
+  const $ = (s, el = document) => el.querySelector(s);
+  const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+  const LS = {
+    get: (k, d = null) => { try { const v = localStorage.getItem(k); return v == null ? d : v; } catch { return d; } },
+    set: (k, v) => { try { localStorage.setItem(k, v); } catch { } },
+    del: (k) => { try { localStorage.removeItem(k); } catch { } },
+  };
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const money = (n) => n == null ? '—' : '$' + Math.round(n).toLocaleString();
+  const ACTIVE = /^(Active|Coming Soon)$/i;
+
+  // ---------- rating model ----------
+  const DEFAULT_WEIGHTS = { rv: 27, kitchen: 17, layout: 9, primary: 6, size: 8, psf: 8, tax: 5, ac: 5, multigen: 7, pool: 3, outdoor: 3, upgrades: 2 };
+  const ITEMS = [
+    { k: 'rv', label: 'RV parking', opts: { fits: 'Fits', likely: 'Listed, unverified', tight: 'Tight', unknown: 'Unknown', no: 'No' }, score: { fits: 1, likely: 0.6, tight: 0.35, unknown: 0.2, no: 0 } },
+    { k: 'kitchen', label: 'Open kitchen', opts: { yes: 'Yes', likely: 'Likely', partial: 'Partly', unknown: 'Unknown', no: 'No' }, score: { yes: 1, likely: 0.7, partial: 0.5, unknown: 0.35, no: 0 } },
+    { k: 'layout', label: 'Layout (levels)', opts: { good: 'Ranch / 2-story', split: 'Split / tri-level', bilevel: 'Bi-level' }, score: { good: 1, split: 0.6, bilevel: 0 } },
+    { k: 'primary', label: 'Primary bedroom on main', opts: { main: 'Main floor', unknown: 'Unknown', other: 'Not main floor' }, score: { main: 1, unknown: 0.4, other: 0 } },
+    { k: 'size', label: 'Finished size' },
+    { k: 'psf', label: '$/sqft value' },
+    { k: 'tax', label: 'Taxes' },
+    { k: 'ac', label: 'A/C', opts: { yes: 'Central', partial: 'Partial / evap', no: 'None' }, score: { yes: 1, partial: 0.5, no: 0 } },
+    { k: 'multigen', label: 'Multigen / rental unit', opts: { yes: 'Yes', maybe: 'Maybe', unknown: 'Unknown', no: 'No' }, score: { yes: 1, maybe: 0.5, unknown: 0.25, no: 0 } },
+    { k: 'pool', label: 'Pool / hot tub', opts: { pool: 'In-ground pool', hottub: 'Hot tub', none: 'None' }, score: { pool: 1, hottub: 0.4, none: 0 } },
+    { k: 'outdoor', label: 'Outdoor entertaining', opts: { great: 'Great', some: 'Some', none: 'Little' }, score: { great: 1, some: 0.5, none: 0 } },
+    { k: 'upgrades', label: 'Recent upgrades', opts: { major: 'Major', some: 'Some', none: 'None' }, score: { major: 1, some: 0.5, none: 0 } },
+  ];
+
+  // ---------- state ----------
+  const S = {
+    meta: null, key: null, token: null, repo: null,
+    data: null, shared: null, sharedSha: null,
+    user: LS.get('hh-user'), tab: LS.get('hh-tab', 'fav'), sort: LS.get('hh-sort', 'score'),
+    showOff: LS.get('hh-showOff') === '1', q: '', prevVisit: LS.get('hh-lastVisit'), openRatings: new Set(),
+  };
+  const defaultShared = () => ({ v: 1, users: [], weights: { ...DEFAULT_WEIGHTS }, ratings: {}, notes: [] });
+
+  // ---------- crypto (same format as scripts/crypto.mjs) ----------
+  const te = new TextEncoder(), td = new TextDecoder();
+  const unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+  const b64 = (u8) => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode(...u8.subarray(i, i + 0x8000)); return btoa(s); };
+  async function deriveKey(pass, meta) {
+    const base = await crypto.subtle.importKey('raw', te.encode(pass), 'PBKDF2', false, ['deriveKey']);
+    return crypto.subtle.deriveKey({ name: 'PBKDF2', hash: 'SHA-256', salt: unb64(meta.salt), iterations: meta.iter }, base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  }
+  async function decryptBox(box) { return JSON.parse(td.decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(box.iv) }, S.key, unb64(box.ct)))); }
+  async function encryptObj(obj) {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, S.key, te.encode(JSON.stringify(obj))));
+    return { v: 1, iv: b64(iv), ct: b64(ct) };
+  }
+
+  // ---------- GitHub ----------
+  function detectRepo() {
+    const q = new URLSearchParams(location.search).get('repo') || LS.get('hh-repo');
+    if (q && /^[\w.-]+\/[\w.-]+$/.test(q)) { const [owner, name] = q.split('/'); return { owner, name }; }
+    if (location.hostname.endsWith('.github.io')) {
+      const owner = location.hostname.split('.')[0];
+      const first = location.pathname.split('/').filter(Boolean)[0];
+      return { owner, name: first && !/\.html?$/.test(first) ? first : `${owner}.github.io` };
+    }
+    return null;
+  }
+  async function gh(path, opts = {}, token = S.token) {
+    const r = await fetch('https://api.github.com' + path, {
+      ...opts, cache: 'no-store',
+      headers: { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(opts.headers || {}) },
+    });
+    if (!r.ok) { const e = new Error(`GitHub ${r.status}`); e.status = r.status; try { e.body = await r.json(); } catch { } throw e; }
+    return r.json();
+  }
+  const repoPath = (file) => `/repos/${S.repo.owner}/${S.repo.name}/contents/docs/data/${file}`;
+  async function readFile(file) {
+    // Fresh copy through the API when we can write; otherwise the Pages copy (may lag ~10 min).
+    if (S.token && S.repo) {
+      try {
+        const j = await gh(repoPath(file) + `?ref=main`);
+        return { box: JSON.parse(td.decode(unb64(j.content.replace(/\n/g, '')))), sha: j.sha };
+      } catch (e) { if (e.status === 404) return { box: null, sha: null }; throw e; }
+    }
+    const r = await fetch(`data/${file}?t=${Date.now()}`, { cache: 'no-store' });
+    if (r.status === 404) return { box: null, sha: null };
+    if (!r.ok) throw new Error(`load ${file}: HTTP ${r.status}`);
+    return { box: await r.json(), sha: null };
+  }
+  async function writeFile(file, box, sha, message, token = S.token) {
+    const body = { message, branch: 'main', content: b64(te.encode(JSON.stringify(box, null, 1) + '\n')) };
+    if (sha) body.sha = sha;
+    return gh(repoPath(file), { method: 'PUT', body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } }, token);
+  }
+  async function updateShared(mutate, message) {
+    if (!S.token) throw new Error('Saving is off. Add a write token in Settings.');
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const { box, sha } = await readFile('shared.enc.json');
+      const data = box ? await decryptBox(box) : defaultShared();
+      mutate(data);
+      try {
+        const res = await writeFile('shared.enc.json', await encryptObj(data), sha, `${message} (by ${S.user || 'someone'})`);
+        S.shared = data; S.sharedSha = res.content.sha; render(); return;
+      } catch (e) { if (e.status === 409 || e.status === 422) continue; throw e; }
+    }
+    throw new Error('Someone else was saving at the same time. Try again.');
+  }
+
+  // ---------- loading ----------
+  async function loadAll() {
+    const lst = await readFile('listings.enc.json');
+    if (!lst.box) throw new Error('No listings file yet.');
+    S.data = await decryptBox(lst.box);
+    const sh = await readFile('shared.enc.json');
+    S.shared = sh.box ? await decryptBox(sh.box) : defaultShared();
+    S.sharedSha = sh.sha;
+    S.shared.weights = { ...DEFAULT_WEIGHTS, ...(S.shared.weights || {}) };
+  }
+  async function loadToken() {
+    S.token = null;
+    try {
+      const r = await fetch(`data/token.enc.json?t=${Date.now()}`, { cache: 'no-store' });
+      if (r.ok) S.token = (await decryptBox(await r.json())).token || null;
+    } catch { S.token = null; }
+  }
+  async function unlock(pass) {
+    S.meta ||= await (await fetch(`data/meta.json?t=${Date.now()}`, { cache: 'no-store' })).json();
+    S.key = await deriveKey(pass, S.meta);
+    const lst = await readFile('listings.enc.json'); // through Pages first: proves the passphrase
+    try { S.data = await decryptBox(lst.box); } catch { throw new Error('That passphrase did not work.'); }
+    LS.set('hh-pass', pass);
+    await loadToken();
+    await loadAll();
+  }
+
+  // ---------- scoring ----------
+  const psfOf = (l) => { const f = parseFloat(l.detail?.fields?.['PSF Finished']); return Number.isFinite(f) && f > 0 ? f : (l.price && l.sqftFin ? l.price / l.sqftFin : null); };
+  const sizeOf = (l) => l.sqftFin || parseFloat(String(l.detail?.fields?.['Living Area (SqFt Fin)'] || '').replace(/,/g, '')) || null;
+  const taxOf = (l) => l.tax || parseFloat(String(l.detail?.fields?.['Tax Annual Amount'] || '').replace(/[$,]/g, '')) || null;
+  function ranges(list) {
+    const r = {};
+    for (const [k, f] of [['psf', psfOf], ['size', sizeOf], ['tax', taxOf]]) {
+      const vals = list.map(f).filter((x) => x != null);
+      r[k] = vals.length ? [Math.min(...vals), Math.max(...vals)] : [0, 0];
+    }
+    return r;
+  }
+  const rel = (x, [lo, hi], higherBetter) => x == null ? 0.5 : hi === lo ? 0.5 : Math.max(0, Math.min(1, higherBetter ? (x - lo) / (hi - lo) : (hi - x) / (hi - lo)));
+  function evaluate(l, rg) {
+    const man = S.shared?.ratings?.[l.id] || {};
+    const h = l.detail?.hints || {};
+    const rvRows = (l.detail?.parking || []).filter((p) => /Recreational/i.test(p.type));
+    const cooling = l.detail?.fields?.Cooling || '';
+    const out = {};
+    const put = (k, autoV, ev) => {
+      const it = ITEMS.find((i) => i.k === k);
+      const m = man[k];
+      const v = m?.v || autoV;
+      out[k] = { v, manual: !!m, by: m?.by, why: m?.why, ev, s: it.score[v] ?? 0, label: it.opts[v] || v };
+    };
+    put('rv', rvRows.length ? 'likely' : 'unknown', rvRows.length ? 'Listing: ' + rvRows.map((p) => p.desc || `${p.spaces} RV space`).join('; ') : (h.rv ? 'Description: ' + h.rv : 'No RV parking in the listing'));
+    put('kitchen', h.openKitchen ? 'likely' : 'unknown', h.openKitchen ? 'Description: ' + h.openKitchen : 'Check the photos');
+    const lv = l.levels || l.detail?.fields?.Levels || '';
+    put('layout', /bi-?level/i.test(lv) ? 'bilevel' : /split|tri|multi|quad/i.test(lv) ? 'split' : 'good', lv ? `Listing: ${lv}` : 'Levels not listed');
+    const pl = h.primaryLevel || '';
+    put('primary', /^main/i.test(pl) || /^one$/i.test(lv) ? 'main' : pl ? 'other' : 'unknown',
+      pl ? `Primary bedroom: ${pl}` : /^one$/i.test(lv) ? 'One-level home' : 'Not in the room list');
+    put('ac', /central/i.test(cooling) ? 'yes' : /evap|swamp|window|ductless|mini/i.test(cooling) ? 'partial' : cooling && !/none/i.test(cooling) ? 'partial' : 'no', cooling ? 'Cooling: ' + cooling : 'No cooling listed');
+    put('multigen', h.multigen ? 'maybe' : 'unknown', h.multigen ? 'Description: ' + h.multigen : '');
+    const pool = h.pool || [];
+    put('pool', pool.some((p) => /pool/.test(p)) ? 'pool' : pool.length ? 'hottub' : 'none', pool.join(', '));
+    const od = h.outdoor || [];
+    put('outdoor', od.length >= 3 ? 'great' : od.length ? 'some' : 'none', od.join(', '));
+    const up = h.upgrades || [];
+    put('upgrades', up.length >= 3 ? 'major' : up.length ? 'some' : 'none', up.join(', '));
+    const psf = psfOf(l), size = sizeOf(l), tax = taxOf(l);
+    out.size = { s: rel(size, rg.size, true), label: size ? `${Math.round(size).toLocaleString()} sqft` : '—', ev: `Your list runs ${Math.round(rg.size[0]).toLocaleString()}–${Math.round(rg.size[1]).toLocaleString()} finished sqft` };
+    out.psf = { s: rel(psf, rg.psf, false), label: psf ? `$${Math.round(psf)}/sqft` : '—', ev: `Your list runs $${Math.round(rg.psf[0])}–$${Math.round(rg.psf[1])} per finished sqft` };
+    out.tax = { s: rel(tax, rg.tax, false), label: tax ? `${money(tax)}/yr` : '—', ev: `Your list runs ${money(rg.tax[0])}–${money(rg.tax[1])} a year` };
+    const w = S.shared?.weights || DEFAULT_WEIGHTS;
+    let tot = 0, wsum = 0;
+    for (const it of ITEMS) { const wt = +w[it.k] || 0; tot += wt * out[it.k].s; wsum += wt; out[it.k].pts = wt * out[it.k].s; out[it.k].w = wt; }
+    return { items: out, total: wsum ? Math.round((tot / wsum) * 100) : 0 };
+  }
+
+  // ---------- rendering ----------
+  const inTab = (l) => S.tab === 'all' ? true : l.bucket === S.tab;
+  const showable = (l) => l.bucket !== 'dislike' && (S.showOff || (ACTIVE.test(l.status || '') && !l.offPortal));
+  function matches(l) {
+    if (!S.q) return true;
+    const notes = [...(l.portalNotes || []), ...((S.shared?.notes || []).filter((n) => n.lid === l.id))].map((n) => n.text).join(' ');
+    return `${l.address} ${l.city} ${l.id} ${notes}`.toLowerCase().includes(S.q.toLowerCase());
+  }
+  const isNew = (l) => S.prevVisit && l.firstSeen > S.prevVisit;
+  function priceDrop(l) {
+    const ev = (l.history || []).filter((h) => h.what === 'price' && h.to < h.from).pop();
+    return ev && Date.now() - Date.parse(ev.at) < 21 * 864e5 ? ev.from - ev.to : 0;
+  }
+  const scoreColor = (n) => `hsl(${Math.round(Math.max(0, Math.min(100, n)) * 1.2)} 55% 38%)`;
+  const ago = (iso) => {
+    if (!iso) return '';
+    const m = Math.round((Date.now() - Date.parse(iso)) / 60000);
+    if (m < 1) return 'just now'; if (m < 60) return `${m} min ago`;
+    const h = Math.round(m / 60); if (h < 36) return `${h} hr ago`;
+    return new Date(iso).toLocaleDateString();
+  };
+  const when = (iso) => { const d = new Date(iso); return isNaN(d) ? iso : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + (Date.now() - d < 864e5 ? ' ' + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''); };
+
+  function highlights(l) {
+    const f = l.detail?.fields || {};
+    const chips = [];
+    const add = (t, cls = '') => t && chips.push(`<span class="chip ${cls}">${esc(t)}</span>`);
+    add(l.levels ? `${l.levels} level` : f.Levels ? `${f.Levels} level` : '');
+    add(l.yearBuilt ? `Built ${l.yearBuilt}` : '');
+    add(l.lotAcres ? `${l.lotAcres} ac lot` : '');
+    add(l.garageSpaces ? `${l.garageSpaces}-car garage` : '');
+    add(f.Basement ? `Basement: ${f.Basement}` : '');
+    add(/^no$/i.test(l.hoa || '') ? 'No HOA' : l.hoa ? `HOA ${l.hoa}` : '');
+    for (const u of (l.detail?.hints?.upgrades || []).slice(0, 4)) add(u, 'good');
+    for (const p of (l.detail?.hints?.pool || []).slice(0, 2)) add(p, 'good');
+    for (const o of (l.detail?.hints?.outdoor || []).slice(0, 3)) add(o);
+    add(f['High School'] ? `HS: ${f['High School']}` : '');
+    return chips.join('');
+  }
+
+  function rateRows(l, ev, canEdit) {
+    return ITEMS.map((it) => {
+      const r = ev.items[it.k];
+      const sel = it.opts ? `<select data-rate="${it.k}" data-lid="${esc(l.id)}" ${canEdit ? '' : 'disabled title="Saving is off"'}>
+          <option value="">Auto (${esc(r.manual ? '' : r.label)})</option>
+          ${Object.entries(it.opts).map(([v, t]) => `<option value="${v}" ${r.manual && r.v === v ? 'selected' : ''}>${esc(t)}</option>`).join('')}
+        </select>` : `<span class="small">${esc(r.label)}</span>`;
+      const evid = [r.manual ? `Set by ${r.by || '?'}${r.why ? ': ' + r.why : ''}` : '', r.ev].filter(Boolean).join(' · ');
+      return `<span class="lbl">${esc(it.label)}</span>${sel}<span class="pts">${r.pts.toFixed(1)}/${r.w}</span>${evid ? `<span class="ev">${esc(evid)}</span>` : ''}`;
+    }).join('');
+  }
+
+  function card(l, rg) {
+    const ev = evaluate(l, rg);
+    const canEdit = !!S.token && !!S.user;
+    const addr = `${l.address}, ${l.city || ''}`;
+    const waze = `https://waze.com/ul?q=${encodeURIComponent(addr)}&navigate=yes`;
+    const gmap = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addr)}`;
+    const bucket = { fav: ['Favorite', 'fav'], poss: ['Possibility', ''], none: ['New from agent', 'new'] }[l.bucket] || ['', ''];
+    const drop = priceDrop(l);
+    const off = !ACTIVE.test(l.status || '') || l.offPortal;
+    const rv = ev.items.rv;
+    const rvCls = { fits: 'good', likely: 'warn', tight: 'warn', no: 'bad' }[rv.v] || '';
+    const sharedNotes = (S.shared?.notes || []).filter((n) => n.lid === l.id).sort((a, b) => a.at.localeCompare(b.at));
+    const portalNotes = l.portalNotes || [];
+    return `<article class="card ${off ? 'dim' : ''}" data-id="${esc(l.id)}">
+      <div class="photo">
+        ${l.photo || l.photoThumb ? `<img loading="lazy" referrerpolicy="no-referrer" src="${esc(l.photo || l.photoThumb)}" data-thumb="${esc(l.photoThumb || '')}" alt="">` : ''}
+        <div class="badges">
+          ${bucket[0] ? `<span class="badge ${bucket[1]}">${bucket[0]}</span>` : ''}
+          ${isNew(l) ? '<span class="badge new">New since your last visit</span>' : ''}
+          ${drop ? `<span class="badge drop">Price ↓ ${money(drop)}</span>` : ''}
+          ${off ? `<span class="badge off">${esc(l.offPortal ? 'Off portal' : l.status)}</span>` : ''}
+        </div>
+        <div class="score" style="background:${scoreColor(ev.total)}" title="Rating out of 100">${ev.total}<small>/100</small></div>
+      </div>
+      <div class="body">
+        <div class="price-row"><span class="price">${money(l.price)}</span><span class="psf">${ev.items.psf.label} · ${ev.items.size.label} fin</span></div>
+        <div class="addr"><a href="${waze}" target="_blank" rel="noopener" title="Open in Waze">${esc(l.address)}</a><div class="facts">${esc(l.city || '')}</div></div>
+        <div class="facts">${l.beds ?? '?'} bd · ${l.baths ?? '?'} ba · ${l.sqftTotal ? l.sqftTotal.toLocaleString() + ' total sqft' : ''} · Taxes ${money(taxOf(l))}${l.detail?.fields?.Cooling ? ' · ' + esc(l.detail.fields.Cooling) : ''}</div>
+        <div class="chips"><span class="chip ${rvCls}">RV: ${esc(rv.label)}</span>${highlights(l)}</div>
+        ${rv.why || rv.ev ? `<div class="facts">${esc(rv.why ? rv.why : rv.ev)}</div>` : ''}
+        <details ${S.openRatings.has(l.id) ? 'open' : ''} data-rating="${esc(l.id)}"><summary>Rating breakdown</summary><div class="rate">${rateRows(l, ev, canEdit)}</div></details>
+        <div class="notes">
+          ${portalNotes.map((n) => `<div class="note portal"><div class="meta"><span>Portal note${n.date ? ' · ' + esc(n.date) : ''}</span></div>${esc(n.text)}</div>`).join('')}
+          ${sharedNotes.map((n) => `<div class="note"><div class="meta"><span>${esc(n.by)} · ${esc(when(n.at))}</span>${n.by === S.user && canEdit ? `<button class="btn link" data-del-note="${esc(n.id)}">Delete</button>` : ''}</div>${esc(n.text)}</div>`).join('')}
+          <form class="add-note" data-note="${esc(l.id)}">
+            <textarea maxlength="1000" placeholder="${canEdit ? 'Add a note' : 'Saving is off'}" ${canEdit ? '' : 'disabled'}></textarea>
+            <button class="btn" ${canEdit ? '' : 'disabled'}>Add</button>
+          </form>
+        </div>
+        <div class="links"><a href="${waze}" target="_blank" rel="noopener">Waze</a><a href="${gmap}" target="_blank" rel="noopener">Google Maps</a>${S.data.portalUrl ? `<a href="${esc(S.data.portalUrl)}" target="_blank" rel="noopener">Portal</a>` : ''}<span class="muted">#${esc(l.id)}${l.detail?.photoCount ? ' · ' + l.detail.photoCount + ' photos' : ''}</span></div>
+      </div>
+    </article>`;
+  }
+
+  function render() {
+    if (!S.data) return;
+    const all = (S.data.listings || []).filter((l) => l.bucket !== 'dislike');
+    const rg = ranges(all.filter((l) => !l.offPortal));
+    const base = all.filter(showable).filter(matches);
+    for (const t of $$('.tab')) {
+      const tab = t.dataset.tab;
+      t.setAttribute('aria-selected', String(tab === S.tab));
+      $('.count', t).textContent = base.filter((l) => tab === 'all' || l.bucket === tab).length;
+    }
+    const list = base.filter(inTab).map((l) => ({ l, ev: null }));
+    const key = {
+      score: (x) => -evaluate(x.l, rg).total, price: (x) => x.l.price ?? 1e12, psf: (x) => psfOf(x.l) ?? 1e9,
+      size: (x) => -(sizeOf(x.l) || 0), tax: (x) => taxOf(x.l) ?? 1e9, newest: (x) => -Date.parse(x.l.firstSeen || 0),
+    }[S.sort] || ((x) => 0);
+    list.sort((a, b) => key(a) - key(b));
+    $('#cards').innerHTML = list.map((x) => card(x.l, rg)).join('');
+    $('#empty').hidden = list.length > 0;
+    $('#search').value = S.q;
+    $('#showOff').checked = S.showOff;
+    $('#sort').value = S.sort;
+    $('#clearFilters').hidden = !(S.q || S.showOff);
+    $('#whoBtn').textContent = S.user || 'Pick your name';
+    $('#updated').textContent = `Listings changed ${ago(S.data.updatedAt)} · checked every 10 min`;
+    const banner = $('#banner');
+    if (!S.token) { banner.hidden = false; banner.textContent = 'Read-only: ratings and notes can be saved once a write token is added in Settings.'; }
+    else banner.hidden = true;
+    for (const img of $$('#cards img')) img.addEventListener('error', () => { if (img.dataset.thumb && img.src !== img.dataset.thumb) img.src = img.dataset.thumb; else img.remove(); }, { once: true });
+  }
+
+  // ---------- dialogs ----------
+  function showWho() {
+    const users = S.shared?.users || [];
+    $('#whoList').innerHTML = users.map((u) => `<button class="btn ${u === S.user ? 'primary' : ''}" value="${esc(u)}">${esc(u)}</button>`).join('')
+      + (users.length ? '' : '<p class="muted small">No names yet. Add one in Settings.</p>');
+    $('#whoDlg').showModal();
+  }
+  function settingsMsg(t, cls = '') { const m = $('#setMsg'); m.textContent = t; m.className = 'msg ' + cls; }
+  function renderSettings() {
+    const users = S.shared?.users || [];
+    $('#userList').innerHTML = users.map((u) => `<li>${esc(u)} <button class="btn link" data-rm-user="${esc(u)}" ${S.token ? '' : 'disabled'} title="Remove">✕</button></li>`).join('');
+    const w = S.shared?.weights || DEFAULT_WEIGHTS;
+    $('#weights').innerHTML = ITEMS.map((it) => `<label for="w-${it.k}">${esc(it.label)}</label><input id="w-${it.k}" type="number" min="0" max="100" step="1" value="${+w[it.k] || 0}" data-w="${it.k}">`).join('');
+    updateWTotal();
+    $('#tokenState').textContent = S.token ? 'Saving is on. A write token is stored (encrypted).' : 'Saving is off. Paste a write token to turn it on.';
+    $('#saveWeights').disabled = !S.token;
+  }
+  function updateWTotal() { const t = $$('#weights input').reduce((a, i) => a + (+i.value || 0), 0); $('#wTotal').textContent = `Total ${t} points (scaled to 100)`; }
+
+  // ---------- events ----------
+  function wire() {
+    $('#lockForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const msg = $('#lockMsg'); msg.className = 'msg'; msg.textContent = 'Unlocking…';
+      try { await unlock($('#pass').value.trim()); start(); }
+      catch (err) { msg.className = 'msg err'; msg.textContent = err.message; }
+    });
+    for (const t of $$('.tab')) t.addEventListener('click', () => { S.tab = t.dataset.tab; LS.set('hh-tab', S.tab); render(); });
+    let st; $('#search').addEventListener('input', (e) => { clearTimeout(st); st = setTimeout(() => { S.q = e.target.value.trim(); render(); }, 150); });
+    $('#showOff').addEventListener('change', (e) => { S.showOff = e.target.checked; LS.set('hh-showOff', S.showOff ? '1' : '0'); render(); });
+    $('#sort').addEventListener('change', (e) => { S.sort = e.target.value; LS.set('hh-sort', S.sort); render(); });
+    $('#clearFilters').addEventListener('click', () => { S.q = ''; S.showOff = false; LS.set('hh-showOff', '0'); render(); });
+    $('#whoBtn').addEventListener('click', showWho);
+    $('#whoForm').addEventListener('submit', (e) => { const v = e.submitter?.value; if (v) { S.user = v; LS.set('hh-user', v); render(); } });
+    $('#settingsBtn').addEventListener('click', () => { renderSettings(); settingsMsg(''); $('#setDlg').showModal(); });
+    $('#setDlg').addEventListener('click', (e) => { if (e.target.matches('[data-close]')) $('#setDlg').close(); });
+
+    const cards = $('#cards');
+    cards.addEventListener('toggle', (e) => { const d = e.target; if (d.dataset?.rating) d.open ? S.openRatings.add(d.dataset.rating) : S.openRatings.delete(d.dataset.rating); }, true);
+    cards.addEventListener('change', async (e) => {
+      const sel = e.target.closest('select[data-rate]'); if (!sel) return;
+      const { rate, lid } = sel.dataset; const v = sel.value;
+      sel.disabled = true;
+      try {
+        await updateShared((d) => {
+          d.ratings ||= {}; d.ratings[lid] ||= {};
+          if (v) d.ratings[lid][rate] = { v, by: S.user, at: new Date().toISOString() }; else delete d.ratings[lid][rate];
+        }, `Rate ${rate}=${v || 'auto'} on ${lid}`);
+      } catch (err) { alertMsg(err.message); render(); }
+    });
+    cards.addEventListener('submit', async (e) => {
+      const f = e.target.closest('form[data-note]'); if (!f) return;
+      e.preventDefault();
+      const ta = $('textarea', f); const text = ta.value.trim(); if (!text) return;
+      $$('button, textarea', f).forEach((x) => (x.disabled = true));
+      try {
+        await updateShared((d) => { d.notes ||= []; d.notes.push({ id: crypto.randomUUID(), lid: f.dataset.note, by: S.user, at: new Date().toISOString(), text }); }, `Note on ${f.dataset.note}`);
+      } catch (err) { alertMsg(err.message); $$('button, textarea', f).forEach((x) => (x.disabled = false)); }
+    });
+    cards.addEventListener('click', async (e) => {
+      const b = e.target.closest('[data-del-note]'); if (!b) return;
+      if (!confirmDelete(b)) return;
+      try { await updateShared((d) => { d.notes = (d.notes || []).filter((n) => !(n.id === b.dataset.delNote && n.by === S.user)); }, 'Delete note'); }
+      catch (err) { alertMsg(err.message); }
+    });
+
+    $('#addUser').addEventListener('submit', async (e) => {
+      e.preventDefault(); const name = $('#newUser').value.trim().slice(0, 30); if (!name) return;
+      try { await updateShared((d) => { d.users ||= []; if (!d.users.includes(name)) d.users.push(name); }, `Add person ${name}`); $('#newUser').value = ''; renderSettings(); settingsMsg(`Added ${name}.`, 'ok'); }
+      catch (err) { settingsMsg(err.message, 'err'); }
+    });
+    $('#userList').addEventListener('click', async (e) => {
+      const b = e.target.closest('[data-rm-user]'); if (!b) return;
+      const name = b.dataset.rmUser;
+      try { await updateShared((d) => { d.users = (d.users || []).filter((u) => u !== name); }, `Remove person ${name}`); renderSettings(); settingsMsg(`Removed ${name}. Their notes stay.`, 'ok'); }
+      catch (err) { settingsMsg(err.message, 'err'); }
+    });
+    $('#weights').addEventListener('input', updateWTotal);
+    $('#saveWeights').addEventListener('click', async () => {
+      const w = Object.fromEntries($$('#weights input').map((i) => [i.dataset.w, Math.max(0, Math.min(100, Math.round(+i.value || 0)))]));
+      try { await updateShared((d) => { d.weights = w; }, 'Change rating weights'); settingsMsg('Weights saved.', 'ok'); }
+      catch (err) { settingsMsg(err.message, 'err'); }
+    });
+    $('#resetWeights').addEventListener('click', () => { for (const i of $$('#weights input')) i.value = DEFAULT_WEIGHTS[i.dataset.w]; updateWTotal(); });
+    $('#tokenForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const tok = $('#tokenIn').value.trim(); if (!tok) return;
+      if (!S.repo) { settingsMsg('Saving only works on the published site.', 'err'); return; }
+      settingsMsg('Checking token…');
+      try {
+        const repo = await gh(`/repos/${S.repo.owner}/${S.repo.name}`, {}, tok);
+        if (!repo.permissions?.push) throw new Error('That token cannot write to this repository.');
+        let sha = null; try { sha = (await gh(repoPath('token.enc.json') + '?ref=main', {}, tok)).sha; } catch { }
+        await writeFile('token.enc.json', await encryptObj({ token: tok, savedBy: S.user, at: new Date().toISOString() }), sha, `Save write token (by ${S.user || 'someone'})`, tok);
+        S.token = tok; $('#tokenIn').value = '';
+        await loadAll(); renderSettings(); render(); settingsMsg('Saving is on for every family device.', 'ok');
+      } catch (err) { settingsMsg(err.body?.message ? `${err.message}: ${err.body.message}` : err.message, 'err'); }
+    });
+    $('#forget').addEventListener('click', () => { LS.del('hh-pass'); location.reload(); });
+
+    const markVisit = () => LS.set('hh-lastVisit', new Date().toISOString());
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') markVisit();
+      else if (S.key) refresh();
+    });
+    window.addEventListener('pagehide', markVisit);
+  }
+  const alertMsg = (t) => { const b = $('#banner'); b.hidden = false; b.textContent = t; };
+  function confirmDelete(btn) {
+    if (btn.dataset.armed) return true;
+    btn.dataset.armed = '1'; btn.textContent = 'Tap again to delete';
+    setTimeout(() => { delete btn.dataset.armed; btn.textContent = 'Delete'; }, 4000);
+    return false;
+  }
+
+  let refreshing = false;
+  async function refresh() {
+    if (refreshing) return; refreshing = true;
+    try { await loadToken(); await loadAll(); render(); } catch { } finally { refreshing = false; }
+  }
+  function start() {
+    $('#lock').hidden = true; $('#main').hidden = false;
+    render();
+    if (!S.user || !(S.shared?.users || []).includes(S.user)) showWho();
+    setInterval(() => { if (document.visibilityState === 'visible') refresh(); }, 5 * 60 * 1000);
+  }
+
+  async function boot() {
+    S.repo = detectRepo();
+    wire();
+    const pass = LS.get('hh-pass');
+    if (pass) {
+      try { await unlock(pass); start(); return; } catch { LS.del('hh-pass'); }
+    }
+    $('#lock').hidden = false; $('#pass').focus();
+  }
+  boot();
+})();

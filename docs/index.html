@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<meta name="referrer" content="no-referrer">
+<title>House Hunt</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M4 15 16 5l12 10v12H19v-8h-6v8H4z' fill='%232f6f5e'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css?v=1">
+</head>
+<body>
+<div id="app">
+  <section id="lock" class="lock" hidden>
+    <form id="lockForm" class="lock-card">
+      <h1>House Hunt</h1>
+      <p class="muted">Enter the family passphrase. This device will remember it.</p>
+      <input id="pass" type="password" autocomplete="current-password" placeholder="passphrase" required>
+      <button class="btn primary" type="submit">Unlock</button>
+      <p id="lockMsg" class="msg" role="status"></p>
+    </form>
+  </section>
+
+  <section id="main" hidden>
+    <header class="top">
+      <div class="brand">
+        <h1>House Hunt</h1>
+        <span id="updated" class="muted small"></span>
+      </div>
+      <div class="who">
+        <span class="muted small">Signed in as</span>
+        <button id="whoBtn" class="btn link" type="button"></button>
+        <button id="settingsBtn" class="btn" type="button" aria-label="Settings">Settings</button>
+      </div>
+    </header>
+
+    <nav class="bar">
+      <div class="tabs" role="tablist">
+        <button class="tab" data-tab="fav" role="tab">Favorites <span class="count"></span></button>
+        <button class="tab" data-tab="poss" role="tab">Possibilities <span class="count"></span></button>
+        <button class="tab" data-tab="none" role="tab">New, unsorted <span class="count"></span></button>
+        <button class="tab" data-tab="all" role="tab">All <span class="count"></span></button>
+      </div>
+      <div class="filters">
+        <input id="search" type="search" placeholder="Search address, city, notes">
+        <button id="clearFilters" class="btn link" type="button" hidden>✕ Clear filters</button>
+        <label class="chk"><input id="showOff" type="checkbox"> Show pending/closed</label>
+        <label class="sort">Sort
+          <select id="sort">
+            <option value="score">Rating</option>
+            <option value="price">Price</option>
+            <option value="psf">$/sqft</option>
+            <option value="size">Size</option>
+            <option value="tax">Taxes</option>
+            <option value="newest">Newest</option>
+          </select>
+        </label>
+      </div>
+    </nav>
+
+    <p id="banner" class="banner" hidden></p>
+    <div id="cards" class="cards"></div>
+    <p id="empty" class="muted center" hidden>No houses match.</p>
+  </section>
+
+  <dialog id="whoDlg" class="dlg">
+    <form method="dialog" id="whoForm">
+      <h2>Who's using this device?</h2>
+      <p class="muted small">Your name goes on the notes and ratings you add.</p>
+      <div id="whoList" class="who-list"></div>
+    </form>
+  </dialog>
+
+  <dialog id="setDlg" class="dlg wide">
+    <div class="dlg-head"><h2>Settings</h2><button class="btn" type="button" data-close>Close</button></div>
+    <section>
+      <h3>People</h3>
+      <p class="muted small">Anyone with the passphrase can pick a name from this list.</p>
+      <ul id="userList" class="user-list"></ul>
+      <form id="addUser" class="row"><input id="newUser" placeholder="Add a name" maxlength="30"><button class="btn" type="submit">Add</button></form>
+    </section>
+    <section>
+      <h3>Rating weights</h3>
+      <p class="muted small">Points each item is worth. The total is scaled to 100.</p>
+      <div id="weights" class="weights"></div>
+      <div class="row"><span id="wTotal" class="muted small"></span><button id="saveWeights" class="btn primary" type="button">Save weights</button><button id="resetWeights" class="btn" type="button">Defaults</button></div>
+    </section>
+    <section>
+      <h3>Saving</h3>
+      <p id="tokenState" class="small"></p>
+      <form id="tokenForm" class="row">
+        <input id="tokenIn" type="password" placeholder="GitHub write token (github_pat_…)" autocomplete="off">
+        <button class="btn" type="submit">Save token</button>
+      </form>
+      <p class="muted small">Paste a fine-grained token limited to this one repository with Contents read and write. It is stored encrypted with the passphrase, so only family devices can use it.</p>
+    </section>
+    <section>
+      <h3>This device</h3>
+      <button id="forget" class="btn" type="button">Lock and forget passphrase on this device</button>
+    </section>
+    <p id="setMsg" class="msg" role="status"></p>
+  </dialog>
+</div>
+<script src="app.js?v=1"></script>
+</body>
+</html>
