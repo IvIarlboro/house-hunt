@@ -214,7 +214,8 @@
       const it = ITEMS.find((i) => i.k === k);
       const m = man[k];
       let v = m?.v || autoV;
-      if (k === 'multigen') v = { yes: 'multigen', maybe: 'multigen' }[v] || v; // older picks before rental/multigen split
+      // Older "Yes/Maybe" picks (before the rental/multigen split) follow what the description shows.
+      if (k === 'multigen' && (v === 'yes' || v === 'maybe')) v = autoV === 'rental' || autoV === 'multigen' ? autoV : 'multigen';
       out[k] = { v, manual: !!m, by: m?.by, why: m?.why, ev, s: it.score[v] ?? 0, label: it.opts[v] || v };
     };
     put('rv', rvRows.length ? 'likely' : 'unknown', rvRows.length ? 'Listing: ' + rvRows.map((p) => p.desc || `${p.spaces} RV space`).join('; ') : (h.rv ? 'Description: ' + h.rv : 'No RV parking in the listing'));
