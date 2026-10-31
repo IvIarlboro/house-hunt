@@ -229,7 +229,7 @@
     const st = l.status || '';
     const listed = usDate(f['Listing Contract Date:']) || usDate(l.listDate);
     const listPrice = num$(f['List Price:']);
-    const orig = l.originalPrice || num$(f['Original List Price']);
+    const orig = origOf(l);
     const conc = S.shared?.sales?.[l.id] || null;
     if (/closed|sold/i.test(st)) {
       const closed = usDate(l.closeDate || f['Close Date:']);
@@ -259,6 +259,80 @@
     const by = s.conc ? ` <span class="muted small">Concessions entered by ${esc(s.conc.by)}.</span>` : '';
     return `<div class="sale ${s.kind}">${main}${by}
       <form class="conc" data-conc="${esc(l.id)}"><label>Concessions $<input inputmode="numeric" value="${c ?? ''}" placeholder="from Brooke" ${canEdit ? '' : 'disabled'}></label><button class="btn" ${canEdit ? '' : 'disabled'}>Save</button></form></div>`;
+  }
+
+  // ---------- market check (from the houses on your own list) ----------
+  const median = (a) => { const v = a.filter((x) => x != null && Number.isFinite(x)).sort((x, y) => x - y); if (!v.length) return null; const m = v.length >> 1; return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2; };
+  function origOf(l) { const f = l.detail?.fields || {}; return l.originalPrice || num$(f['Original List Price:']) || num$(f['Original List Price']) || null; }
+  function listedOf(l) { const f = l.detail?.fields || {}; return usDate(f['Listing Contract Date:']) || usDate(l.listDate); }
+  function cutOf(l) {
+    const o = origOf(l), p = l.price;
+    let from = o && p && o > p ? o : null;
+    if (!from) { const d = (l.history || []).find((h) => h.what === 'price' && h.to < h.from); if (d && p < d.from) from = d.from; }
+    return from ? { pct: (from - p) / from, from } : { pct: 0, from: null };
+  }
+  function market(all) {
+    const sold = [], pend = [], act = [];
+    for (const l of all) {
+      const s = sale(l);
+      if (s?.kind === 'sold') sold.push({ l, s });
+      else if (s?.kind === 'pending') pend.push({ l, s });
+      else if (ACTIVE.test(l.status || '') && !l.offPortal) act.push(l);
+    }
+    const ratio = median(sold.map(({ s }) => (s.listPrice ? (s.sold - (s.conc?.amount || 0)) / s.listPrice : null)));
+    const dtc = median(pend.map(({ s }) => s.dtc));
+    let lean = 'Balanced';
+    if (ratio != null && dtc != null) {
+      if (ratio >= 0.995 && dtc <= 21) lean = 'Leans to sellers';
+      else if (ratio < 0.975 || dtc > 45) lean = 'Leans to buyers';
+    }
+    return {
+      sold: sold.length, pend: pend.length, act: act.length, ratio, dtc, lean,
+      withConc: sold.filter(({ s }) => s.conc?.amount != null).length,
+      dToClose: median(sold.map(({ s }) => s.dom)),
+      soldPsf: median(sold.map(({ l }) => psfOf(l))),
+      cuts: act.filter((l) => cutOf(l).pct > 0).length,
+      enough: sold.length + pend.length >= 6,
+    };
+  }
+  // How much room there may be to offer under list on an active house. Informational; not part of the rating.
+  function room(l, mk) {
+    if (!mk || !ACTIVE.test(l.status || '') || l.offPortal) return null;
+    const listed = listedOf(l);
+    const t = new Date(); t.setHours(0, 0, 0, 0);
+    const dom = listed ? Math.max(0, Math.round((t - listed) / 864e5)) : null;
+    const why = []; let pts = 0;
+    if (dom != null && mk.dtc) {
+      const med = Math.round(mk.dtc);
+      if (dom > 2 * mk.dtc) { pts += 2; why.push(`${dom} days on market, over twice the ${med}-day median`); }
+      else if (dom > mk.dtc) { pts += 1; why.push(`${dom} days on market vs a ${med}-day median`); }
+      else why.push(`${dom} days on market, still fresh (median ${med})`);
+    }
+    const cut = cutOf(l);
+    if (cut.pct >= 0.05) { pts += 2; why.push(`cut ${(cut.pct * 100).toFixed(1)}% from ${money(cut.from)}`); }
+    else if (cut.pct > 0) { pts += 1; why.push(`cut ${(cut.pct * 100).toFixed(1)}% from ${money(cut.from)}`); }
+    const psf = psfOf(l);
+    if (psf && mk.soldPsf) {
+      const d = psf / mk.soldPsf - 1;
+      if (d > 0.1) { pts += 1; why.push(`$/sqft ${Math.round(d * 100)}% above recent sales`); }
+      else if (d < -0.1) { pts -= 1; why.push(`$/sqft ${Math.round(-d * 100)}% below recent sales`); }
+    }
+    return { level: pts >= 3 ? 'High' : pts >= 2 ? 'Medium' : 'Low', pts, why };
+  }
+  function marketPanel(mk) {
+    const pct = (r) => (r == null ? '—' : `${r >= 1 ? '+' : ''}${((r - 1) * 100).toFixed(1)}%`);
+    const tile = (label, val, sub) => `<div class="tile"><div class="tl">${esc(label)}</div><div class="tv">${esc(val)}</div>${sub ? `<div class="ts">${esc(sub)}</div>` : ''}</div>`;
+    return `<details class="market" ${LS.get('hh-mkt') === '0' ? '' : 'open'}>
+      <summary><b>Market check:</b> ${esc(mk.lean)} <span class="muted small">· from ${mk.sold} sold and ${mk.pend} pending on your list</span></summary>
+      <div class="tiles">
+        ${tile('Sold vs list (median)', pct(mk.ratio), mk.sold ? (mk.withConc ? `net of concessions on ${mk.withConc} of ${mk.sold}` : 'no concessions entered yet') : 'no sales yet')}
+        ${tile('Days to contract (median)', mk.dtc == null ? '—' : String(Math.round(mk.dtc)), `${mk.pend} pending`)}
+        ${tile('Listing to close (median)', mk.dToClose == null ? '—' : `${Math.round(mk.dToClose)} days`, `${mk.sold} sold`)}
+        ${tile('Active with price cuts', `${mk.cuts} of ${mk.act}`, '')}
+        ${tile('Sold $/sqft (median)', mk.soldPsf ? `$${Math.round(mk.soldPsf)}` : '—', 'finished sqft')}
+      </div>
+      <p class="muted small">Only the houses Brooke sent you, not the whole MLS${mk.enough ? '' : ', so treat it as a rough read'}. Concessions entered on sold houses make "sold vs list" truer. "Leans to sellers" means the median sale was at list or above and contracts came within 3 weeks; "Leans to buyers" means 2.5%+ under list or 45+ days to contract.</p>
+    </details>`;
   }
 
   function priceDrop(l) {
@@ -332,6 +406,7 @@
       <div class="body">
         <div class="price-row"><span class="price">${money(l.price)}</span><span class="psf">${ev.items.psf.label} · ${ev.items.size.label} fin</span></div>
         ${saleBlock(l, canEdit)}
+        ${(() => { const r = room(l, S.mk); return r ? `<div class="room room-${r.level.toLowerCase()}" title="How much room there may be to offer under list. Not part of the rating."><b>Negotiating room: ${r.level}</b>${r.why.length ? ' · ' + esc(r.why.join(' · ')) : ''}</div>` : ''; })()}
         <div class="addr"><a href="${waze}" target="_blank" rel="noopener" title="Open in Waze">${esc(l.address)}</a><div class="facts">${esc(l.city || '')}</div></div>
         <div class="facts">${l.beds ?? '?'} bd · ${l.baths ?? '?'} ba · ${l.sqftTotal ? l.sqftTotal.toLocaleString() + ' total sqft' : ''} · Taxes ${money(taxOf(l))}${l.detail?.fields?.Cooling ? ' · ' + esc(l.detail.fields.Cooling) : ''}</div>
         <div class="chips"><span class="chip ${rvCls}">RV: ${esc(rv.label)}</span>${highlights(l)}</div>
@@ -354,6 +429,8 @@
     if (!S.data) return;
     const all = (S.data.listings || []).filter((l) => l.bucket !== 'dislike');
     const rg = ranges(all.filter((l) => !l.offPortal));
+    S.mk = market(all);
+    $('#market').innerHTML = marketPanel(S.mk);
     const base = all.filter(showable).filter(matches);
     for (const t of $$('.tab')) {
       const tab = t.dataset.tab;
@@ -364,6 +441,7 @@
     const key = {
       score: (x) => -evaluate(x.l, rg).total, price: (x) => x.l.price ?? 1e12, psf: (x) => psfOf(x.l) ?? 1e9,
       size: (x) => -(sizeOf(x.l) || 0), tax: (x) => taxOf(x.l) ?? 1e9, newest: (x) => -Date.parse(x.l.firstSeen || 0),
+      room: (x) => -(room(x.l, S.mk)?.pts ?? -99),
     }[S.sort] || ((x) => 0);
     list.sort((a, b) => key(a) - key(b));
     $('#cards').innerHTML = list.map((x) => card(x.l, rg)).join('');
@@ -427,6 +505,7 @@
     let st; $('#search').addEventListener('input', (e) => { clearTimeout(st); st = setTimeout(() => { S.q = e.target.value.trim(); render(); }, 150); });
     $('#showOff').addEventListener('change', (e) => { S.showOff = e.target.checked; LS.set('hh-hideOff', S.showOff ? '0' : '1'); render(); });
     $('#sort').addEventListener('change', (e) => { S.sort = e.target.value; LS.set('hh-sort', S.sort); render(); });
+    $('#market').addEventListener('toggle', (e) => { if (e.target.matches?.('details.market')) LS.set('hh-mkt', e.target.open ? '1' : '0'); }, true);
     $('#clearFilters').addEventListener('click', () => { S.q = ''; S.showOff = true; LS.set('hh-hideOff', '0'); render(); });
     $('#cards').addEventListener('submit', async (e) => {
       const f = e.target.closest('form[data-conc]'); if (!f) return;
