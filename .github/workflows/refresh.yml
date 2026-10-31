@@ -5,7 +5,8 @@ name: Refresh listings
 
 on:
   schedule:
-    - cron: '*/10 * * * *'
+    # Offset from :00 — GitHub delays or drops scheduled runs most around the top of the hour.
+    - cron: '3,13,23,33,43,53 * * * *'
   workflow_dispatch:
 
 permissions:
