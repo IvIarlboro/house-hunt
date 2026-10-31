@@ -39,6 +39,15 @@
     showOff: LS.get('hh-showOff') === '1', q: '', prevVisit: LS.get('hh-lastVisit'), openRatings: new Set(),
   };
   const defaultShared = () => ({ v: 1, users: [], weights: { ...DEFAULT_WEIGHTS }, ratings: {}, notes: [] });
+  // Owner check: the owner's name and the rating weights are guarded by an owner PIN.
+  // The PIN's PBKDF2 hash lives inside the encrypted shared file; a verified device keeps the hash locally.
+  const ownerName = () => S.shared?.owner?.name || null;
+  const isOwner = () => !!S.shared?.owner && S.user === S.shared.owner.name && LS.get('hh-owner') === S.shared.owner.hash;
+  async function pinHash(pin, owner) {
+    const base = await crypto.subtle.importKey('raw', te.encode(pin.trim().toLowerCase()), 'PBKDF2', false, ['deriveBits']);
+    const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: unb64(owner.salt), iterations: owner.iter }, base, 256);
+    return b64(new Uint8Array(bits));
+  }
 
   // ---------- crypto (same format as scripts/crypto.mjs) ----------
   const te = new TextEncoder(), td = new TextDecoder();
@@ -320,12 +329,18 @@
   function settingsMsg(t, cls = '') { const m = $('#setMsg'); m.textContent = t; m.className = 'msg ' + cls; }
   function renderSettings() {
     const users = S.shared?.users || [];
-    $('#userList').innerHTML = users.map((u) => `<li>${esc(u)} <button class="btn link" data-rm-user="${esc(u)}" ${S.token ? '' : 'disabled'} title="Remove">✕</button></li>`).join('');
+    $('#userList').innerHTML = users.map((u) => u === ownerName()
+      ? `<li>${esc(u)} <span class="muted small">(owner)</span>&nbsp;</li>`
+      : `<li>${esc(u)} <button class="btn link" data-rm-user="${esc(u)}" ${S.token ? '' : 'disabled'} title="Remove">✕</button></li>`).join('');
     const w = S.shared?.weights || DEFAULT_WEIGHTS;
-    $('#weights').innerHTML = ITEMS.map((it) => `<label for="w-${it.k}">${esc(it.label)}</label><input id="w-${it.k}" type="number" min="0" max="100" step="1" value="${+w[it.k] || 0}" data-w="${it.k}">`).join('');
+    const own = isOwner();
+    $('#weights').innerHTML = ITEMS.map((it) => `<label for="w-${it.k}">${esc(it.label)}</label><input id="w-${it.k}" type="number" min="0" max="100" step="1" value="${+w[it.k] || 0}" data-w="${it.k}" ${own ? '' : 'disabled'}>`).join('');
     updateWTotal();
+    $('#wOwner').textContent = own ? '' : `Only ${ownerName() || 'the owner'} can change the rating system.`;
     $('#tokenState').textContent = S.token ? 'Saving is on. A write token is stored (encrypted).' : 'Saving is off. Paste a write token to turn it on.';
-    $('#saveWeights').disabled = !S.token;
+    $('#saveWeights').disabled = !S.token || !own;
+    $('#resetWeights').disabled = !own;
+    $('#tokenForm').hidden = !!S.token && !own;
   }
   function updateWTotal() { const t = $$('#weights input').reduce((a, i) => a + (+i.value || 0), 0); $('#wTotal').textContent = `Total ${t} points (scaled to 100)`; }
 
@@ -343,7 +358,18 @@
     $('#sort').addEventListener('change', (e) => { S.sort = e.target.value; LS.set('hh-sort', S.sort); render(); });
     $('#clearFilters').addEventListener('click', () => { S.q = ''; S.showOff = false; LS.set('hh-showOff', '0'); render(); });
     $('#whoBtn').addEventListener('click', showWho);
-    $('#whoForm').addEventListener('submit', (e) => { const v = e.submitter?.value; if (v) { S.user = v; LS.set('hh-user', v); render(); } });
+    $('#whoForm').addEventListener('submit', async (e) => {
+      const v = e.submitter?.value; if (!v) return;
+      if (v === ownerName() && LS.get('hh-owner') !== S.shared.owner.hash) {
+        e.preventDefault();
+        const pin = prompt(`Enter ${v}'s owner PIN`);
+        if (!pin) return;
+        if (await pinHash(pin, S.shared.owner) !== S.shared.owner.hash) { alert('That PIN is not right.'); return; }
+        LS.set('hh-owner', S.shared.owner.hash);
+        $('#whoDlg').close();
+      }
+      S.user = v; LS.set('hh-user', v); render();
+    });
     $('#settingsBtn').addEventListener('click', () => { renderSettings(); settingsMsg(''); $('#setDlg').showModal(); });
     $('#setDlg').addEventListener('click', (e) => { if (e.target.matches('[data-close]')) $('#setDlg').close(); });
 
@@ -384,12 +410,14 @@
     $('#userList').addEventListener('click', async (e) => {
       const b = e.target.closest('[data-rm-user]'); if (!b) return;
       const name = b.dataset.rmUser;
+      if (name === ownerName()) return;
       try { await updateShared((d) => { d.users = (d.users || []).filter((u) => u !== name); }, `Remove person ${name}`); renderSettings(); settingsMsg(`Removed ${name}. Their notes stay.`, 'ok'); }
       catch (err) { settingsMsg(err.message, 'err'); }
     });
     $('#weights').addEventListener('input', updateWTotal);
     $('#saveWeights').addEventListener('click', async () => {
-      const w = Object.fromEntries($$('#weights input').map((i) => [i.dataset.w, Math.max(0, Math.min(100, Math.round(+i.value || 0)))]));
+      if (!isOwner()) { settingsMsg(`Only ${ownerName() || 'the owner'} can change the rating system.`, 'err'); return; }
+      const w =Object.fromEntries($$('#weights input').map((i) => [i.dataset.w, Math.max(0, Math.min(100, Math.round(+i.value || 0)))]));
       try { await updateShared((d) => { d.weights = w; }, 'Change rating weights'); settingsMsg('Weights saved.', 'ok'); }
       catch (err) { settingsMsg(err.message, 'err'); }
     });

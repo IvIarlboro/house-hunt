@@ -149,8 +149,8 @@ async function main() {
       if (staged) git('commit', '-q', '-m', `Listings update: ${changes.length ? changes.slice(0, 3).join('; ') : 'details refreshed'}`);
       const hasRemote = git('remote').length > 0;
       if (hasRemote) { git('pull', '--rebase', '-q'); git('push', '-q'); }
-      log(summary + (hasRemote ? ' — pushed' : ' — committed (no remote yet)'));
-    } catch (e) { log(summary + ' — git failed: ' + (e.stderr || e.message).toString().trim().slice(0, 300)); process.exitCode = 1; }
+      log(summary + (hasRemote ? ' - pushed' : ' - committed (no remote yet)'));
+    } catch (e) { log(summary + ' - git failed: ' + (e.stderr || e.message).toString().trim().slice(0, 300)); process.exitCode = 1; }
   } else log(summary);
 }
 

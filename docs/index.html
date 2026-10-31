@@ -7,7 +7,7 @@
 <meta name="referrer" content="no-referrer">
 <title>House Hunt</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M4 15 16 5l12 10v12H19v-8h-6v8H4z' fill='%232f6f5e'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="style.css?v=1">
+<link rel="stylesheet" href="style.css?v=2">
 </head>
 <body>
 <div id="app">
@@ -82,6 +82,7 @@
     <section>
       <h3>Rating weights</h3>
       <p class="muted small">Points each item is worth. The total is scaled to 100.</p>
+      <p id="wOwner" class="small"></p>
       <div id="weights" class="weights"></div>
       <div class="row"><span id="wTotal" class="muted small"></span><button id="saveWeights" class="btn primary" type="button">Save weights</button><button id="resetWeights" class="btn" type="button">Defaults</button></div>
     </section>
@@ -101,6 +102,6 @@
     <p id="setMsg" class="msg" role="status"></p>
   </dialog>
 </div>
-<script src="app.js?v=1"></script>
+<script src="app.js?v=2"></script>
 </body>
 </html>
