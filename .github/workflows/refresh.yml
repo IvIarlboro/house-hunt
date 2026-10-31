@@ -4,9 +4,11 @@
 name: Refresh listings
 
 on:
-  schedule:
-    # Offset from :00 — GitHub delays or drops scheduled runs most around the top of the hour.
-    - cron: '3,13,23,33,43,53 * * * *'
+  # GitHub's own scheduler fired only once in ~7 hours for this repo (Oct 31 2026), and the portal's
+  # photo links expire within hours, so the schedule is off. Arvada's Task Scheduler runs the refresh
+  # until an external trigger (e.g. cron-job.org calling workflow_dispatch) is set up.
+  # schedule:
+  #   - cron: '3,13,23,33,43,53 * * * *'
   workflow_dispatch:
 
 permissions:
