@@ -157,17 +157,9 @@ async function main() {
       l.detail = {
         fields: d.fields, parking: d.parking, photoCount: d.photoCount, hints: d.hints,
       };
-      // The portal mints a new link (exk=) for the same photo each session; keep the old links
-      // unless the photos changed, so quiet runs don't look like changes. Links are renewed weekly
-      // in case old ones expire.
-      const bare = (u) => (u || '').replace(/&exk=[^&]*/, '');
-      const fresh = l.photosAt && Date.now() - Date.parse(l.photosAt) < 7 * 864e5;
-      const samePhotos = fresh && l.photos && J(l.photos.map(bare)) === J((d.photos || []).map(bare)) && bare(l.photo) === bare(d.photo);
-      if (!samePhotos) {
-        l.photo = d.photo || l.photo || l.photoThumb;
-        l.photos = d.photos || [];
-        l.photosAt = nowIso;
-      }
+      // Photos come from the list page (l.media, stable links). Detail-page photo links expire within
+      // about an hour, so they are not stored.
+      delete l.photo; delete l.photos; delete l.photosAt;
       l.tours = d.tours || [];
       if (d.geo) l.geo = d.geo;
       l.portalNotes = d.notes.map((n) => ({ date: absDate(n.when, now), text: n.text, by: n.by }));
@@ -175,7 +167,7 @@ async function main() {
       await sleep(400);
     } catch (e) { log(`detail failed ${l.id} ${l.address}: ${e.message}`); }
   }
-  for (const l of Object.values(next)) delete l.needsDetail;
+  for (const l of Object.values(next)) { delete l.needsDetail; delete l.photo; delete l.photos; delete l.photosAt; }
 
   // Published payload: drop volatile fields so a quiet run doesn't create a commit.
   const pubListings = Object.values(next)

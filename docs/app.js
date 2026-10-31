@@ -148,6 +148,8 @@
     if (S.token && S.repo) {
       try {
         const j = await gh(repoPath(file) + `?ref=main`);
+        // Over 1 MB the contents API omits the body; fetch the raw file instead.
+        if (!j.content) return { box: await gh(repoPath(file) + `?ref=main`, { headers: { Accept: 'application/vnd.github.raw' } }), sha: j.sha };
         return { box: JSON.parse(td.decode(unb64(j.content.replace(/\n/g, '')))), sha: j.sha };
       } catch (e) { if (e.status === 404) return { box: null, sha: null }; throw e; }
     }
@@ -467,7 +469,8 @@
     const canEdit = !!S.token && !!S.user;
     const addr = `${l.address}, ${l.city || ''}`;
     const { waze, gmap } = mapLinks(l);
-    const nPhotos = l.photos?.length || l.detail?.photoCount || 0;
+    const phs = photoList(l), first = phs[0];
+    const nPhotos = phs.length;
     const bucket = { fav: ['Favorite', 'fav'], poss: ['Possibility', ''], none: ['New from agent', 'new'] }[l.bucket] || ['', ''];
     const drop = priceDrop(l);
     const off = !ACTIVE.test(l.status || '') || l.offPortal;
@@ -477,7 +480,7 @@
     const portalNotes = l.portalNotes || [];
     return `<article class="card ${off ? 'dim' : ''} ${ev.total < LOW_SCORE && l.bucket !== 'fav' ? 'low' : ''}" data-id="${esc(l.id)}">
       <div class="photo">
-        ${l.photo || l.photoThumb ? `<button class="ph-open" type="button" data-gal="${esc(l.id)}" aria-label="See all ${nPhotos} photos"><img loading="lazy" referrerpolicy="no-referrer" src="${esc(l.photo || l.photoThumb)}" data-thumb="${esc(l.photoThumb || '')}" alt="">${nPhotos > 1 ? `<span class="ph-count">${nPhotos} photos</span>` : ''}</button>` : ''}
+        ${first ? `<button class="ph-open" type="button" data-gal="${esc(l.id)}" aria-label="See all ${nPhotos} photos"><img loading="lazy" referrerpolicy="no-referrer" src="${esc(first.t)}" srcset="${esc(first.t)} 296w, ${esc(first.f)} 1600w" sizes="(max-width: 460px) 100vw, 420px" data-thumb="${esc(l.photoThumb || '')}" alt="">${nPhotos > 1 ? `<span class="ph-count">${nPhotos} photos</span>` : ''}</button>` : ''}
         <div class="badges">
           ${bucket[0] ? `<span class="badge ${bucket[1]}">${bucket[0]}</span>` : ''}
           ${isNew(l) ? '<span class="badge new">New since your last visit</span>' : ''}
@@ -530,9 +533,20 @@
   }
   const satLink = (l) => (l.geo ? `<a href="https://www.google.com/maps/@${l.geo.lat},${l.geo.lng},70m/data=!3m1!1e3" target="_blank" rel="noopener" title="Satellite view, handy for checking RV access">Satellite</a>` : '');
   const tourLinks = (l) => (l.tours || []).map((t) => `<a href="${esc(t.url)}" target="_blank" rel="noopener">${esc(t.kind)}</a>`).join('');
+  // Photo links rebuilt from the compact list-page data: t = card size (296px), f = full size (1600px).
+  const MEDIA = 'https://matrixmedia.recolorado.com/mediaserver/GetMedia.ashx?';
+  const mediaUrl = (key, n, size, exk) => `${MEDIA}Key=${key}&TableID=9&Type=1&Number=${n}&Size=${size}&exk=${exk}`;
+  function photoList(l) {
+    const m = l.media;
+    if (!m?.p?.length) return l.photoThumb ? [{ t: l.photoThumb, f: l.photoThumb }] : [];
+    return m.p.map(([n, e2, e4]) => {
+      const t = e2 ? mediaUrl(m.key, n, 2, e2) : mediaUrl(m.key, n, 4, e4);
+      return { t, f: e4 ? mediaUrl(m.key, n, 4, e4) : t };
+    });
+  }
   function openGallery(id) {
     const l = (S.data.listings || []).find((x) => x.id === id); if (!l) return;
-    const ph = (l.photos?.length ? l.photos : [l.photo || l.photoThumb]).filter(Boolean);
+    const ph = photoList(l).map((p) => p.f);
     S.gal = { l, ph, i: 0 };
     drawGal(); $('#galDlg').showModal();
   }

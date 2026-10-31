@@ -64,6 +64,14 @@ function parseListRecord(key, chunk) {
   const addrM = chunk.match(/Redisplay\|69,,(\d+)'\)">([^<]+)<\/a>/) || chunk.match(/Redisplay\|69,,(\d+)&#39;\)">([^<]+)<\/a>/);
   const cityLine = chunk.match(/<span class="formula J_formula">\s*([^<]*?,\s*CO\s*\d{5})\s*<\/span>/)?.[1];
   const photo = chunk.match(/https:\/\/matrixmedia\.recolorado\.com\/mediaserver\/GetMedia\.ashx\?[^"']+/)?.[0];
+  // Every photo of this listing, from the list page's carousel. These links are stable (the detail page's
+  // links expire within about an hour). Stored compactly as [number, exk for Size=2, exk for Size=4].
+  const med = new Map();
+  for (const m of chunk.matchAll(/GetMedia\.ashx\?Key=(\d+)&(?:amp;)?TableID=9&(?:amp;)?Type=1&(?:amp;)?Number=(\d+)&(?:amp;)?Size=(\d)&(?:amp;)?exk=([0-9a-f]+)/g)) {
+    if (m[1] !== key) continue;
+    const e = med.get(+m[2]) || {}; e['s' + m[3]] = m[4]; med.set(+m[2], e);
+  }
+  const media = { key, p: [...med.entries()].sort((a, b) => a[0] - b[0]).filter(([, e]) => e.s2 || e.s4).map(([n, e]) => [n, e.s2 || '', e.s4 || '']) };
   const L = toLines(chunk);
   const after = (label) => { const i = L.indexOf(label); return i >= 0 ? L[i + 1] : null; };
   const before = (label) => { const i = L.indexOf(label); return i > 0 ? L[i - 1] : null; };
@@ -96,6 +104,7 @@ function parseListRecord(key, chunk) {
     hoa: after('HOA'),
     tax: num(after('Annual Tax')),
     photoThumb: photo ? ent(photo) : null,
+    media,
   };
 }
 
