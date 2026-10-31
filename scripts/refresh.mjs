@@ -51,10 +51,31 @@ function absDate(label, now = new Date()) {
   return label;
 }
 
-// Freddie Mac's weekly mortgage survey (published Thursdays). Checked about twice a day;
-// the published data only changes when a new week's numbers come out.
+// Rates, checked about twice a day:
+//  - Freddie Mac's weekly survey (30-yr and 15-yr fixed, published Thursdays)
+//  - Mortgage News Daily's daily index for the 7/6 adjustable (Freddie Mac stopped ARMs in 2022)
 async function fetchRates(prev) {
   if (prev?.fetchedAt && Date.now() - Date.parse(prev.fetchedAt) < 12 * 3600e3) return prev;
+  const fixed = await fetchPmms(prev);
+  const arm = await fetchMndArm(prev);
+  return fixed ? { ...fixed, ...arm, fetchedAt: new Date().toISOString() } : prev || null;
+}
+async function fetchMndArm(prev) {
+  try {
+    const r = await fetch('https://www.mortgagenewsdaily.com/mortgage-rates', { headers: { 'User-Agent': 'Mozilla/5.0' } });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const L = (await r.text()).replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, '\n').split('\n').map((x) => x.trim()).filter(Boolean);
+    // First "7/6 SOFR ARM" label followed closely by a percentage is MND's own daily index.
+    for (let i = 0; i < L.length; i++) {
+      if (/^7\/6 SOFR ARM$/i.test(L[i])) {
+        const v = L.slice(i + 1, i + 3).find((x) => /^\d+\.\d+%$/.test(x));
+        if (v) return { arm76: +v.replace('%', ''), armSource: 'Mortgage News Daily index', armDate: new Date().toISOString().slice(0, 10) };
+      }
+    }
+    throw new Error('7/6 ARM rate not found');
+  } catch (e) { log('ARM rate fetch failed: ' + e.message); return prev?.arm76 ? { arm76: prev.arm76, armSource: prev.armSource, armDate: prev.armDate } : {}; }
+}
+async function fetchPmms(prev) {
   try {
     const r = await fetch('https://www.freddiemac.com/pmms/docs/PMMS_history.csv', { headers: { 'User-Agent': 'Mozilla/5.0' } });
     if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -65,9 +86,8 @@ async function fetchRates(prev) {
     return {
       source: 'Freddie Mac weekly survey', date: iso(last[0]),
       r30: n(last[1]), r15: n(last[3]), r30Prev: before ? n(before[1]) : null, r15Prev: before ? n(before[3]) : null,
-      fetchedAt: new Date().toISOString(),
     };
-  } catch (e) { log('rates fetch failed: ' + e.message); return prev || null; }
+  } catch (e) { log('Freddie Mac rates fetch failed: ' + e.message); if (!prev) return null; const { fetchedAt, arm76, armSource, armDate, ...p } = prev; return p; }
 }
 
 function git(...a) {

@@ -122,9 +122,10 @@ function cues(text, re) {
   return [...out];
 }
 const OPEN_KITCHEN = /\bopen[- ](?:concept|floor[- ]?plan|kitchen|layout|living)|kitchen (?:that )?opens|opens? (?:up )?(?:in)?to the (?:living|family|great)|great room/i;
-// Rentable unit (worth more to Jeremy) vs. multigenerational space (family living, not rentable as-is).
-const RENTAL = /rental (?:income|revenue|history|potential)|income (?:property|potential|opportunit)|\bADU\b|accessory dwelling|separate (?:entrance|apartment|unit)|private entrance|lock[- ]?off|(?:basement|garden[- ]level|in[- ]law|mother[- ]in[- ]law) apartment|double apartments|\bapartments?\b|(?:mid|short|long)[- ]term rental|airbnb|\bduplex\b|second (?:unit|dwelling)|carriage house|guest house|casita/i;
-const MULTIGEN = /multi[- ]?gen|mother[- ]?in[- ]?law|in[- ]?law (?:suite|quarters)|second (?:kitchen|primary|master)|dual (?:primary|master)|kitchenette|wet bar\/kitchen|basement kitchen|guest suite|separate living (?:quarters|area|space)/i;
+// Rental = a unit they can rent out while living in the house: an ADU or a space with its own entrance
+// (Jeremy, Oct 31 2026). Whole-house rental history / "rental income" wording does NOT count.
+const RENTAL = /\bADU\b|accessory dwelling|separate (?:entrance|entry|apartment|unit|dwelling)|private (?:entrance|entry)|own (?:entrance|entry)|exterior entrance|walk-?out (?:apartment|unit)|lock[- ]?off|(?:basement|garden[- ]level|in[- ]law|mother[- ]in[- ]law) apartment|double apartments|\bduplex\b|second (?:unit|dwelling)|carriage house|guest house|casita/i;
+const MULTIGEN = /multi[- ]?gen|mother[- ]?in[- ]?law|in[- ]?law (?:suite|quarters)|second (?:kitchen|primary|master)|dual (?:primary|master)|kitchenette|wet bar\/kitchen|basement kitchen|guest (?:suite|quarters)|separate living (?:quarters|area|space)/i;
 const RV = /\bRV\b|camper|\bboat\b|trailer|toy hauler/i;
 
 function sentenceWith(text, re) {

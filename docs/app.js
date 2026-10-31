@@ -58,7 +58,17 @@
   // the home PC; the owner can add a lender quote that becomes the default. Insurance default sits toward the
   // high end of 2026 Colorado averages for this price range.
   const FALLBACK_RATES = { source: 'Freddie Mac weekly survey', date: '2026-10-29', r30: 7.24, r15: 6.6 };
-  const DEFAULT_LOAN = { downPct: 20, insYear: 4000, customRate: null, customTerm: 30, customNote: '' };
+  // Insurance is estimated per house: a % of price, higher in the foothills/mountains (wildfire risk), unless a
+  // real quote is entered on the card. 0.55% ≈ $4,400/yr on an $800k Arvada house, inside 2026 Colorado ranges.
+  const DEFAULT_LOAN = { downPct: 20, insPct: 0.55, insMtn: 1.6, customRate: null, customTerm: 30, customNote: '' };
+  const isMountain = (l) => (l.geo?.lng != null ? l.geo.lng < -105.24 : (l.lotAcres || 0) >= 2);
+  function insurance(l) {
+    const q = S.shared?.ins?.[l.id];
+    if (q?.amount) return { yr: q.amount, how: `quote from ${q.by}` };
+    const L = loan(); if (!l.price) return { yr: 0, how: '' };
+    const mtn = isMountain(l);
+    return { yr: l.price * (L.insPct / 100) * (mtn ? L.insMtn : 1), how: mtn ? 'estimate, foothills/mountain area' : 'estimate, metro area' };
+  }
   const loan = () => ({ ...DEFAULT_LOAN, ...(S.shared?.prefs?.loan || {}) });
   const ratesNow = () => S.data?.rates || FALLBACK_RATES;
   function loanOptions() {
@@ -68,6 +78,7 @@
     if (R.r30) opts.push({ k: 'r30', rate: R.r30, term: 30, label: `30-yr fixed · ${R.r30}% avg` });
     if (R.r30) opts.push({ k: 'r30pt', rate: +(R.r30 - 0.25).toFixed(2), term: 30, label: `30-yr, 1 point paid · ~${(R.r30 - 0.25).toFixed(2)}%`, note: '1 discount point costs 1% of the loan upfront and usually trims about 0.25%' });
     if (R.r15) opts.push({ k: 'r15', rate: R.r15, term: 15, label: `15-yr fixed · ${R.r15}% avg` });
+    if (R.arm76) opts.push({ k: 'arm76', rate: R.arm76, term: 30, arm: true, label: `7/6 adjustable · ${R.arm76}% for 7 yrs`, note: 'Rate fixed for the first 7 years, then adjusts every 6 months. Payment shown is the first-7-years payment.' });
     return opts;
   }
   function loanChoice() {
@@ -80,10 +91,11 @@
     const down = price * L.downPct / 100, principal = price - down;
     const r = O.rate / 100 / 12, n = O.term * 12;
     const pi = r ? principal * r / (1 - Math.pow(1 + r, -n)) : principal / n;
-    const tax = (taxOf(l) || 0) / 12, ins = L.insYear / 12;
+    const taxYr = taxOf(l) || 0, insI = insurance(l);
+    const tax = taxYr / 12, ins = insI.yr / 12;
     const hoaYr = parseFloat(String(l.detail?.fields?.['Total Annual HOA Fees'] || '').replace(/[$,]/g, '')) || 0;
     const hoa = hoaYr / 12;
-    return { total: pi + tax + ins + hoa, pi, tax, ins, hoa, down, L, O };
+    return { total: pi + tax + ins + hoa, pi, tax, ins, hoa, down, L, O, taxYr, insI };
   }
   // Owner check: the owner's name and the rating weights are guarded by an owner PIN.
   // The PIN's PBKDF2 hash lives inside the encrypted shared file; a verified device keeps the hash locally.
@@ -465,8 +477,11 @@
         ${(() => {
           if (/closed|sold/i.test(l.status || '')) return '';
           const p = payment(l); if (!p) return '';
+          const q = S.shared?.ins?.[l.id]?.amount;
           return `<div class="pay"><span>≈ <b>${money(p.total)}/mo</b> · <b>${money(p.down)}</b> down (${p.L.downPct}%)</span>
-            <span class="muted">P&amp;I ${money(p.pi)} at ${p.O.rate}% ${p.O.term}-yr · tax ${money(p.tax)} · insurance ~${money(p.ins)}${p.hoa ? ` · HOA ${money(p.hoa)}` : ''}</span></div>`;
+            <span class="muted">P&amp;I ${money(p.pi)}/mo at ${p.O.rate}% ${p.O.arm ? '7/6 adjustable (first 7 yrs)' : `${p.O.term}-yr fixed`}${p.hoa ? ` · HOA ${money(p.hoa)}/mo` : ''}</span>
+            <span>Property tax <b>${money(p.taxYr)}/yr</b> <span class="muted">(listing)</span> · Insurance <b>${q ? '' : '~'}${money(p.insI.yr)}/yr</b> <span class="muted">(${esc(p.insI.how)})</span></span>
+            <form class="conc ins" data-ins="${esc(l.id)}"><label>Insurance quote $/yr<input inputmode="numeric" value="${q ?? ''}" placeholder="amount" ${canEdit ? '' : 'disabled'}></label><button class="btn" ${canEdit ? '' : 'disabled'}>Save</button></form></div>`;
         })()}
         ${saleBlock(l, canEdit)}
         ${(() => { const r = room(l, S.mk); return r ? `<div class="room room-${r.level.toLowerCase()}" title="How much room there may be to offer under list. Not part of the rating."><b>Negotiating room: ${r.level}</b>${r.why.length ? ' · ' + esc(r.why.join(' · ')) : ''}</div>` : ''; })()}
@@ -586,7 +601,7 @@
     $('#saveWeights').disabled = !S.token || !own;
     $('#resetWeights').disabled = !own;
     const L = loan();
-    for (const [id, v] of [['loanRate', L.customRate ?? ''], ['loanTerm', L.customTerm || 30], ['loanDown', L.downPct], ['loanIns', L.insYear]]) { $('#' + id).value = v; $('#' + id).disabled = !own; }
+    for (const [id, v] of [['loanRate', L.customRate ?? ''], ['loanTerm', L.customTerm || 30], ['loanDown', L.downPct], ['loanIns', L.insPct], ['loanMtn', L.insMtn]]) { $('#' + id).value = v; $('#' + id).disabled = !own; }
     const R = ratesNow();
     $('#loanNote').textContent = `Freddie Mac week of ${R.date}: 30-yr ${R.r30}%, 15-yr ${R.r15}% (updates on its own).${L.customRate ? ` Your quote ${L.customNote ? '(' + L.customNote + ')' : ''} is the default loan.` : ''}`;
     $('#saveLoan').disabled = !S.token || !own;
@@ -634,6 +649,22 @@
     $('#market').addEventListener('toggle', (e) => { if (e.target.matches?.('details.market')) LS.set('hh-mkt', e.target.open ? '1' : '0'); }, true);
     $('#clearFilters').addEventListener('click', () => { S.q = ''; S.showOff = true; LS.set('hh-hideOff', '0'); render(); });
     $('#cards').addEventListener('submit', async (e) => {
+      const fi = e.target.closest('form[data-ins]');
+      if (fi) {
+        e.preventDefault();
+        const raw = $('input', fi).value.trim();
+        const amount = raw === '' ? null : Math.round(parseFloat(raw.replace(/[$,\s]/g, '')));
+        if (raw !== '' && !(amount > 0)) { alertMsg('Insurance quote must be a yearly dollar amount, like 4800.'); return; }
+        $$('button, input', fi).forEach((x) => (x.disabled = true));
+        try {
+          await updateShared((d) => {
+            d.ins ||= {};
+            if (amount == null) delete d.ins[fi.dataset.ins];
+            else d.ins[fi.dataset.ins] = { amount, by: S.user, at: new Date().toISOString() };
+          }, `Insurance quote on ${fi.dataset.ins}`);
+        } catch (err) { alertMsg(err.message); $$('button, input', fi).forEach((x) => (x.disabled = false)); }
+        return;
+      }
       const f = e.target.closest('form[data-conc]'); if (!f) return;
       e.preventDefault();
       const raw = $('input', f).value.trim();
@@ -717,8 +748,8 @@
     $('#saveLoan').addEventListener('click', async () => {
       if (!isOwner()) { settingsMsg(`Only ${ownerName() || 'the owner'} can change the payment assumptions.`, 'err'); return; }
       const v = (id, lo, hi) => { const raw = $('#' + id).value.trim(); if (raw === '') return null; const n = parseFloat(raw); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : NaN; };
-      const next = { downPct: v('loanDown', 0, 100), insYear: v('loanIns', 0, 50000), customRate: v('loanRate', 0, 20), customTerm: v('loanTerm', 5, 40) || 30 };
-      if (next.downPct == null || next.insYear == null || Object.values(next).some((x) => Number.isNaN(x))) { settingsMsg('Down % and insurance are required; the quoted rate can be left blank.', 'err'); return; }
+      const next = { downPct: v('loanDown', 0, 100), insPct: v('loanIns', 0, 5), insMtn: v('loanMtn', 1, 5), customRate: v('loanRate', 0, 20), customTerm: v('loanTerm', 5, 40) || 30 };
+      if (next.downPct == null || next.insPct == null || next.insMtn == null || Object.values(next).some((x) => Number.isNaN(x))) { settingsMsg('Down %, insurance % and the mountain factor are required; the quoted rate can be left blank.', 'err'); return; }
       const changedRate = next.customRate !== (loan().customRate ?? null);
       next.customNote = next.customRate ? (changedRate ? `entered by ${S.user} on ${new Date().toLocaleDateString()}` : loan().customNote) : '';
       try {
