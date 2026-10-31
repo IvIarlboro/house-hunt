@@ -40,9 +40,9 @@
     // Jeremy's levels: rental 8, multigen 5, no 0 — scaled so a rental earns the item's full weight.
     { k: 'multigen', label: 'Multigen / rental unit', opts: { rental: 'Rental / ADU', multigen: 'Multigen', unknown: 'Unknown', no: 'No' }, score: { rental: 1, multigen: 5 / 8, unknown: 0, no: 0 } },
     // Pool only (Jeremy, Oct 31 2026): a hot tub earns nothing here; it still shows as a highlight chip.
-    { k: 'pool', label: 'Pool', opts: { pool: 'Pool', none: 'No pool' }, score: { pool: 1, none: 0, hottub: 0 } },
-    { k: 'outdoor', label: 'Outdoor entertaining', opts: { great: 'Great', some: 'Some', none: 'Little' }, score: { great: 1, some: 0.5, none: 0 } },
-    { k: 'upgrades', label: 'Recent upgrades', opts: { major: 'Major', some: 'Some', none: 'None' }, score: { major: 1, some: 0.5, none: 0 } },
+    { k: 'pool', label: 'Pool', opts: { pool: 'Pool', none: 'No pool', unknown: 'Unknown' }, score: { pool: 1, none: 0, hottub: 0, unknown: 0 } },
+    { k: 'outdoor', label: 'Outdoor entertaining', opts: { great: 'Great', some: 'Some', none: 'Little', unknown: 'Unknown' }, score: { great: 1, some: 0.5, none: 0, unknown: 0 } },
+    { k: 'upgrades', label: 'Recent upgrades', opts: { major: 'Major', some: 'Some', none: 'None', unknown: 'Unknown' }, score: { major: 1, some: 0.5, none: 0, unknown: 0 } },
     { k: 'age', label: 'Year built' },
   ];
 
@@ -240,7 +240,7 @@
     }
     return r;
   }
-  const rel = (x, [lo, hi], higherBetter) => x == null ? 0.5 : hi === lo ? 0.5 : Math.max(0, Math.min(1, higherBetter ? (x - lo) / (hi - lo) : (hi - x) / (hi - lo)));
+  const rel = (x, [lo, hi], higherBetter) => x == null ? 0 : hi === lo ? 0.5 : Math.max(0, Math.min(1, higherBetter ? (x - lo) / (hi - lo) : (hi - x) / (hi - lo)));
   function evaluate(l, rg) {
     const man = S.shared?.ratings?.[l.id] || {};
     const h = l.detail?.hints || {};
@@ -277,17 +277,20 @@
       h.rental ? 'Description: ' + h.rental : h.multigen ? 'Description: ' + h.multigen : 'Nothing in the description');
     const pool = h.pool || [];
     const pools = pool.filter((p) => /pool/.test(p));
-    put('pool', pools.length ? 'pool' : 'none', pools.length ? pools.join(', ') : pool.length ? `Only ${pool.join(', ')} (doesn't count)` : '');
+    const noPool = /^no$/i.test(l.detail?.fields?.['Pool Private YN'] || '');
+    put('pool', pools.length ? 'pool' : noPool ? 'none' : 'unknown',
+      pools.length ? pools.join(', ') : noPool ? 'Listing: no private pool' + (pool.length ? ` (only ${pool.join(', ')})` : '') : pool.length ? `Only ${pool.join(', ')} mentioned` : 'Pool not mentioned');
     const od = h.outdoor || [];
-    put('outdoor', od.length >= 3 ? 'great' : od.length ? 'some' : 'none', od.join(', '));
+    put('outdoor', od.length >= 3 ? 'great' : od.length ? 'some' : 'unknown', od.length ? od.join(', ') : 'Nothing mentioned');
     const up = h.upgrades || [];
-    put('upgrades', up.length >= 3 ? 'major' : up.length ? 'some' : 'none', up.join(', '));
+    put('upgrades', up.length >= 3 ? 'major' : up.length ? 'some' : 'unknown', up.length ? up.join(', ') : 'Nothing mentioned');
     const psf = psfOf(l), size = sizeOf(l), tax = taxOf(l);
-    out.size = { s: rel(size, rg.size, true), label: size ? `${Math.round(size).toLocaleString()} sqft` : '—', ev: `Your list runs ${Math.round(rg.size[0]).toLocaleString()}–${Math.round(rg.size[1]).toLocaleString()} finished sqft` };
-    out.psf = { s: rel(psf, rg.psf, false), label: psf ? `$${Math.round(psf)}/sqft` : '—', ev: `Your list runs $${Math.round(rg.psf[0])}–$${Math.round(rg.psf[1])} per finished sqft` };
-    out.tax = { s: rel(tax, rg.tax, false), label: tax ? `${money(tax)}/yr` : '—', ev: `Your list runs ${money(rg.tax[0])}–${money(rg.tax[1])} a year` };
+    // Number-based items: missing number = Unknown (0 points, highlighted), like every other item.
+    out.size = { v: size ? 'n' : 'unknown', s: rel(size, rg.size, true), label: size ? `${Math.round(size).toLocaleString()} sqft` : 'Unknown', ev: `Your list runs ${Math.round(rg.size[0]).toLocaleString()}–${Math.round(rg.size[1]).toLocaleString()} finished sqft` };
+    out.psf = { v: psf ? 'n' : 'unknown', s: rel(psf, rg.psf, false), label: psf ? `$${Math.round(psf)}/sqft` : 'Unknown', ev: `Your list runs $${Math.round(rg.psf[0])}–$${Math.round(rg.psf[1])} per finished sqft` };
+    out.tax = { v: tax ? 'n' : 'unknown', s: rel(tax, rg.tax, false), label: tax ? `${money(tax)}/yr` : 'Unknown', ev: `Your list runs ${money(rg.tax[0])}–${money(rg.tax[1])} a year` };
     const yr = yearOf(l);
-    out.age = { s: rel(yr, rg.year, ageNewer()), label: yr ? `Built ${yr}` : '—', ev: `Your list runs ${rg.year[0]}–${rg.year[1]} · ${ageNewer() ? 'newer' : 'older'} scores higher` };
+    out.age = { v: yr ? 'n' : 'unknown', s: rel(yr, rg.year, ageNewer()), label: yr ? `Built ${yr}` : 'Unknown', ev: `Your list runs ${rg.year[0]}–${rg.year[1]} · ${ageNewer() ? 'newer' : 'older'} scores higher` };
     const w = S.shared?.weights || DEFAULT_WEIGHTS;
     let tot = 0, wsum = 0;
     for (const it of ITEMS) { const wt = +w[it.k] || 0; tot += wt * out[it.k].s; wsum += wt; out[it.k].pts = wt * out[it.k].s; out[it.k].w = wt; }
