@@ -38,6 +38,12 @@
     { k: 'upgrades', label: 'Recent upgrades', opts: { major: 'Major', some: 'Some', none: 'None' }, score: { major: 1, some: 0.5, none: 0 } },
   ];
 
+  // Items ordered by their current weight, most points first (ties keep the list order above).
+  const byWeight = () => {
+    const w = S.shared?.weights || DEFAULT_WEIGHTS;
+    return ITEMS.map((it, i) => ({ it, i })).sort((a, b) => (+w[b.it.k] || 0) - (+w[a.it.k] || 0) || a.i - b.i).map((x) => x.it);
+  };
+
   // ---------- state ----------
   const S = {
     meta: null, key: null, token: null, repo: null,
@@ -241,7 +247,7 @@
   }
 
   function rateRows(l, ev, canEdit) {
-    return ITEMS.map((it) => {
+    return byWeight().map((it) => {
       const r = ev.items[it.k];
       const sel = it.opts ? `<select data-rate="${it.k}" data-lid="${esc(l.id)}" ${canEdit ? '' : 'disabled title="Saving is off"'}>
           <option value="">Auto (${esc(r.manual ? '' : r.label)})</option>
@@ -341,7 +347,7 @@
       : `<li>${esc(u)} <button class="btn link" data-rm-user="${esc(u)}" ${S.token ? '' : 'disabled'} title="Remove">✕</button></li>`).join('');
     const w = S.shared?.weights || DEFAULT_WEIGHTS;
     const own = isOwner();
-    $('#weights').innerHTML = ITEMS.map((it) => `<label for="w-${it.k}">${esc(it.label)}</label><input id="w-${it.k}" type="number" min="0" max="100" step="1" value="${+w[it.k] || 0}" data-w="${it.k}" ${own ? '' : 'disabled'}>`).join('');
+    $('#weights').innerHTML = byWeight().map((it) => `<label for="w-${it.k}">${esc(it.label)}</label><input id="w-${it.k}" type="number" min="0" max="100" step="1" value="${+w[it.k] || 0}" data-w="${it.k}" ${own ? '' : 'disabled'}>`).join('');
     updateWTotal();
     $('#wOwner').textContent = own ? '' : `Only ${ownerName() || 'the owner'} can change the rating system.`;
     $('#tokenState').textContent = S.token ? 'Saving is on. A write token is stored (encrypted).' : 'Saving is off. Paste a write token to turn it on.';
