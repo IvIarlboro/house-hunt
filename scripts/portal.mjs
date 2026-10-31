@@ -169,7 +169,9 @@ export function parseDetail(html) {
     const who = ent(m[3]).trim();
     if (text) notes.push({ when: ent(m[1]).trim(), text, by: who === 'Me' ? 'Portal (you)' : who });
   }
-  const remarks = L.filter((s) => s.length > 250).sort((a, b) => b.length - a.length)[0] || '';
+  // The listing description can span several paragraphs; read all of them (they sit before "General Description").
+  const gd = L.indexOf('General Description');
+  const remarks = (gd > 0 ? L.slice(0, gd) : L).filter((s) => s.length > 120 && !/^(SECTION|SUBDIVISION)/.test(s)).join(' ');
   // Room table rows read "Bedroom", "Primary", "<Level>" — find the primary bedroom's level.
   let primaryLevel = null;
   const ri = L.indexOf('Detailed Room Info');
