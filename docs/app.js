@@ -397,7 +397,7 @@
     const rvCls = { fits: 'good', likely: 'warn', tight: 'warn', no: 'bad' }[rv.v] || '';
     const sharedNotes = (S.shared?.notes || []).filter((n) => n.lid === l.id).sort((a, b) => a.at.localeCompare(b.at));
     const portalNotes = l.portalNotes || [];
-    return `<article class="card ${off ? 'dim' : ''} ${ev.total < LOW_SCORE ? 'low' : ''}" data-id="${esc(l.id)}">
+    return `<article class="card ${off ? 'dim' : ''} ${ev.total < LOW_SCORE && l.bucket !== 'fav' ? 'low' : ''}" data-id="${esc(l.id)}">
       <div class="photo">
         ${l.photo || l.photoThumb ? `<button class="ph-open" type="button" data-gal="${esc(l.id)}" aria-label="See all ${nPhotos} photos"><img loading="lazy" referrerpolicy="no-referrer" src="${esc(l.photo || l.photoThumb)}" data-thumb="${esc(l.photoThumb || '')}" alt="">${nPhotos > 1 ? `<span class="ph-count">${nPhotos} photos</span>` : ''}</button>` : ''}
         <div class="badges">
@@ -466,8 +466,10 @@
     S.mk = market(all);
     $('#market').innerHTML = marketPanel(S.mk);
     const scored = all.filter(showable).filter(matches).map((l) => ({ l, total: evaluate(l, rg).total }));
-    const lowHere = scored.filter((x) => x.total < LOW_SCORE && inTab(x.l)).length;
-    const base = scored.filter((x) => S.showLow || x.total >= LOW_SCORE).map((x) => x.l);
+    // Favorites always show, whatever they score (Jeremy's rule).
+    const isLow = (x) => x.total < LOW_SCORE && x.l.bucket !== 'fav';
+    const lowHere = scored.filter((x) => isLow(x) && inTab(x.l)).length;
+    const base = scored.filter((x) => S.showLow || !isLow(x)).map((x) => x.l);
     const lowNote = $('#lowNote');
     lowNote.hidden = !lowHere;
     lowNote.innerHTML = S.showLow
