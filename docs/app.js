@@ -303,8 +303,8 @@
     const listed = listedOf(l);
     const t = new Date(); t.setHours(0, 0, 0, 0);
     const dom = listed ? Math.max(0, Math.round((t - listed) / 864e5)) : null;
-    const why = []; let pts = 0;
-    const dd = (n) => `${n} day${n === 1 ? '' : 's'}`;
+    const why = []; let pts = 0, psfPts = 0;
+    const dd =(n) => `${n} day${n === 1 ? '' : 's'}`;
     if (dom != null && mk.dtc) {
       const med = Math.round(mk.dtc);
       if (dom > 3 * mk.dtc) { pts += 2; why.push(`${dd(dom)} on market, about ${Math.round(dom / mk.dtc)}× the ${med}-day median`); }
@@ -317,10 +317,12 @@
     const psf = psfTotalOf(l);
     if (psf && mk.soldPsf) {
       const d = psf / mk.soldPsf - 1;
-      if (d > 0.15) { pts += 1; why.push(`$/total sqft ${Math.round(d * 100)}% above recent sales`); }
-      else if (d < -0.15) { pts -= 1; why.push(`$/total sqft ${Math.round(-d * 100)}% below recent sales`); }
+      if (d > 0.15) { pts += 1; psfPts = 1; why.push(`$/total sqft ${Math.round(d * 100)}% above recent sales`); }
+      else if (d < -0.15) { pts -= 1; psfPts = -1; why.push(`$/total sqft ${Math.round(-d * 100)}% below recent sales`); }
     }
-    return { level: pts >= 3 ? 'High' : pts >= 2 ? 'Medium' : 'Low', pts, why };
+    // Time on market or a real price cut is needed for Medium; a high $/sqft alone on a fresh listing stays Low.
+    const timePts = pts - psfPts;
+    return { level: pts >= 3 ? 'High' : timePts >= 1 ? 'Medium' : 'Low', pts, why };
   }
   function marketPanel(mk) {
     const pct = (r) => (r == null ? '—' : `${r >= 1 ? '+' : ''}${((r - 1) * 100).toFixed(1)}%`);
