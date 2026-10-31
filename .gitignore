@@ -2,3 +2,4 @@ node_modules/
 .claude/
 scripts/seed-shared.mjs
 *.log
+.hh-state/

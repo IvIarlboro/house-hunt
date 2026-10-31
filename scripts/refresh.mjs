@@ -15,7 +15,10 @@ import { WORDS } from './words.mjs';
 // %USERPROFILE%\.house-hunt\secret.json as "portalUrl", never in this public repo.
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DATA = join(REPO, 'docs', 'data');
-const HOME = join(process.env.USERPROFILE || process.env.HOME, '.house-hunt');
+// On GitHub Actions the secrets come from repository secrets (HH_PASSPHRASE, HH_PORTAL_URL) and state
+// lives in HH_STATE_DIR (kept between runs by the Actions cache). On a PC they come from ~/.house-hunt.
+const IN_ACTIONS = !!process.env.GITHUB_ACTIONS;
+const HOME = process.env.HH_STATE_DIR || join(process.env.USERPROFILE || process.env.HOME, '.house-hunt');
 const SECRET = join(HOME, 'secret.json');
 const STATE = join(HOME, 'state.json');
 const LOG = join(HOME, 'refresh.log');
@@ -91,12 +94,17 @@ async function fetchPmms(prev) {
 }
 
 function git(...a) {
-  return execFileSync('git', ['-C', REPO, '-c', 'credential.helper=', '-c', 'credential.helper=manager', ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  // On Actions, checkout's own credentials push; on the PC, use Windows Credential Manager.
+  const helper = IN_ACTIONS ? [] : ['-c', 'credential.helper=', '-c', 'credential.helper=manager'];
+  return execFileSync('git', ['-C', REPO, ...helper, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
 
 async function main() {
   // Secret passphrase (created once, kept outside the repo).
-  let secret = readJson(SECRET);
+  let secret = process.env.HH_PASSPHRASE
+    ? { passphrase: process.env.HH_PASSPHRASE.trim(), portalUrl: (process.env.HH_PORTAL_URL || '').trim() }
+    : readJson(SECRET);
+  if (!secret && IN_ACTIONS) throw new Error('HH_PASSPHRASE / HH_PORTAL_URL repository secrets are not set');
   if (!secret) {
     const pick = () => WORDS[randomInt(WORDS.length)];
     secret = { passphrase: `${pick()}-${pick()}-${pick()}-${pick()}-${pick()}-${randomInt(10, 100)}`, created: new Date().toISOString() };

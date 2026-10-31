@@ -1,0 +1,51 @@
+# Checks the listing portal every 10 minutes on GitHub's servers and publishes encrypted updates.
+# Secrets (Settings > Secrets and variables > Actions): HH_PASSPHRASE, HH_PORTAL_URL.
+# GitHub may delay scheduled runs a few minutes when busy.
+name: Refresh listings
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: refresh-listings
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Restore state from the last run
+        uses: actions/cache/restore@v4
+        with:
+          path: .hh-state
+          key: hh-state-${{ github.run_id }}
+          restore-keys: hh-state-
+
+      - name: Refresh
+        env:
+          HH_PASSPHRASE: ${{ secrets.HH_PASSPHRASE }}
+          HH_PORTAL_URL: ${{ secrets.HH_PORTAL_URL }}
+          HH_STATE_DIR: ${{ github.workspace }}/.hh-state
+        run: |
+          git config user.name "house-hunt refresh"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          node scripts/refresh.mjs
+
+      - name: Save state for the next run
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .hh-state
+          key: hh-state-${{ github.run_id }}
