@@ -552,11 +552,24 @@
       return { t, f: e4 ? mediaUrl(m.key, n, 4, e4) : t };
     });
   }
+  // Freeze the page behind a popup window so swipes and scrolls don't move it (works on iPhone too),
+  // then put it back exactly where it was.
+  let lockY = null;
+  function lockScroll() {
+    if (lockY !== null) return;
+    lockY = window.scrollY;
+    Object.assign(document.body.style, { position: 'fixed', top: `-${lockY}px`, left: '0', right: '0', width: '100%' });
+  }
+  function unlockScroll() {
+    if (lockY === null) return;
+    Object.assign(document.body.style, { position: '', top: '', left: '', right: '', width: '' });
+    window.scrollTo(0, lockY); lockY = null;
+  }
   function openGallery(id) {
     const l = (S.data.listings || []).find((x) => x.id === id); if (!l) return;
     const ph = photoList(l).map((p) => p.f);
     S.gal = { l, ph, i: 0 };
-    drawGal(); $('#galDlg').showModal();
+    drawGal(); lockScroll(); $('#galDlg').showModal();
   }
   function drawGal(step = 0) {
     const g = S.gal; if (!g) return;
@@ -729,7 +742,11 @@
     });
     $('#galPrev').addEventListener('click', () => drawGal(-1));
     $('#galNext').addEventListener('click', () => drawGal(1));
-    $('#galClose').addEventListener('click', () => $('#galDlg').close());
+    $('#galClose').addEventListener('click', () => { $('#galDlg').close(); unlockScroll(); });
+    // Unlock the page whenever a window closes (Close button, Esc key, or a tap outside the gallery).
+    $('#galDlg').addEventListener('close', unlockScroll);
+    $('#setDlg').addEventListener('close', unlockScroll);
+    $('#galDlg').addEventListener('click', (e) => { if (e.target === e.currentTarget) $('#galDlg').close(); });
     $('#galDlg').addEventListener('keydown', (e) => { if (e.key === 'ArrowLeft') drawGal(-1); if (e.key === 'ArrowRight') drawGal(1); });
     let tx = null;
     $('#galDlg').addEventListener('touchstart', (e) => { tx = e.touches[0].clientX; }, { passive: true });
@@ -782,8 +799,8 @@
       }
       S.user = v; LS.set('hh-user', v); render();
     });
-    $('#settingsBtn').addEventListener('click', () => { renderSettings(); settingsMsg(''); $('#setDlg').showModal(); });
-    $('#setDlg').addEventListener('click', (e) => { if (e.target.matches('[data-close]')) $('#setDlg').close(); });
+    $('#settingsBtn').addEventListener('click', () => { renderSettings(); settingsMsg(''); lockScroll(); $('#setDlg').showModal(); });
+    $('#setDlg').addEventListener('click', (e) => { if (e.target.matches('[data-close]')) { $('#setDlg').close(); unlockScroll(); } });
 
     const cards = $('#cards');
     // Remember which house is being worked on, keep half-typed notes, and run a held-back redraw
