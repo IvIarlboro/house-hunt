@@ -39,6 +39,7 @@ jobs:
           HH_PORTAL_URL: ${{ secrets.HH_PORTAL_URL }}
           HH_STATE_DIR: ${{ github.workspace }}/.hh-state
         run: |
+          if [ -z "$HH_PASSPHRASE" ] || [ -z "$HH_PORTAL_URL" ]; then echo "Secrets not set yet - skipping."; exit 0; fi
           git config user.name "house-hunt refresh"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           node scripts/refresh.mjs
