@@ -7,7 +7,7 @@
 <meta name="referrer" content="no-referrer">
 <title>House Hunt</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M4 15 16 5l12 10v12H19v-8h-6v8H4z' fill='%232f6f5e'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="style.css?v=20">
+<link rel="stylesheet" href="style.css?v=21">
 </head>
 <body>
 <div id="app">
@@ -68,6 +68,7 @@
     <p id="banner" class="banner" hidden></p>
     <div id="market"></div>
     <p id="lowNote" class="low-note" hidden></p>
+    <p id="resortNote" class="low-note" hidden>Order is held while you edit so houses don't jump around. <button id="resortBtn" class="btn link" type="button">Re-sort now</button></p>
     <div id="cards" class="cards"></div>
     <p id="empty" class="muted center" hidden>No houses match.</p>
   </section>
@@ -140,6 +141,6 @@
     <p id="setMsg" class="msg" role="status"></p>
   </dialog>
 </div>
-<script src="app.js?v=20"></script>
+<script src="app.js?v=21"></script>
 </body>
 </html>

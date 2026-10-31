@@ -171,7 +171,7 @@
       mutate(data);
       try {
         const res = await writeFile('shared.enc.json', await encryptObj(data), sha, `${message} (by ${S.user || 'someone'})`);
-        S.shared = data; S.sharedSha = res.content.sha; render(); return;
+        S.shared = data; S.sharedSha = res.content.sha; render(); flashCard(S.editId); return;
       } catch (e) { if (e.status === 409 || e.status === 422) continue; throw e; }
     }
     throw new Error('Someone else was saving at the same time. Try again.');
@@ -520,7 +520,7 @@
           ${portalNotes.map((n) => `<div class="note portal"><div class="meta"><span>Portal note${n.date ? ' · ' + esc(n.date) : ''}</span></div>${esc(n.text)}</div>`).join('')}
           ${sharedNotes.map((n) => `<div class="note"><div class="meta"><span>${esc(n.by)} · ${esc(when(n.at))}</span>${n.by === S.user && canEdit ? `<button class="btn link" data-del-note="${esc(n.id)}">Delete</button>` : ''}</div>${esc(n.text)}</div>`).join('')}
           <form class="add-note" data-note="${esc(l.id)}">
-            <textarea maxlength="1000" placeholder="${canEdit ? 'Add a note' : 'Saving is off'}" ${canEdit ? '' : 'disabled'}></textarea>
+            <textarea maxlength="1000" placeholder="${canEdit ? 'Add a note' : 'Saving is off'}" ${canEdit ? '' : 'disabled'}>${esc(S.drafts?.[l.id] || '')}</textarea>
             <button class="btn" ${canEdit ? '' : 'disabled'}>Add</button>
           </form>
         </div>
@@ -569,6 +569,26 @@
   }
 
   const LOW_SCORE = 50;
+  // The card being worked on (or the first one on screen) keeps its spot on screen across redraws.
+  function pickAnchor() {
+    const cards = $$('#cards .card');
+    const visible = (c) => { const r = c.getBoundingClientRect(); return r.bottom > 60 && r.top < innerHeight; };
+    let el = S.editId ? cards.find((c) => c.dataset.id === S.editId && visible(c)) : null;
+    el ||= cards.find((c) => c.getBoundingClientRect().bottom > 80);
+    return el ? { id: el.dataset.id, top: el.getBoundingClientRect().top } : null;
+  }
+  function restoreAnchor(a) {
+    const el = $(`.card[data-id="${CSS.escape(a.id)}"]`);
+    if (el) window.scrollBy(0, el.getBoundingClientRect().top - a.top);
+  }
+  function flashCard(id) {
+    const el = id && $(`.card[data-id="${CSS.escape(id)}"]`); if (!el) return;
+    el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
+    setTimeout(() => el.classList.remove('flash'), 1600);
+  }
+  if (location.hostname === 'localhost') window.__hh = { S: () => S, render: () => render() }; // local testing only
+  const busyTyping = () => { const a = document.activeElement; return !!(a && a.closest?.('#cards') && /^(TEXTAREA|INPUT)$/.test(a.tagName)); };
+
   function render() {
     if (!S.data) return;
     const all = (S.data.listings || []).filter((l) => l.bucket !== 'dislike');
@@ -600,7 +620,21 @@
       room: (x) => -(room(x.l, S.mk)?.pts ?? -99),
     }[S.sort] || ((x) => 0);
     list.sort((a, b) => key(a) - key(b));
+    // Keep the order steady while editing: re-sort only when the tab/sort/filters/search change,
+    // on "Re-sort now", or on reload. New houses join at the end until then.
+    const orderKey = [S.tab, S.sort, S.q, S.showOff, S.ohOnly, S.showLow, LS.get('hh-loanOpt')].join('|');
+    const trueIds = list.map((x) => x.l.id);
+    const sameView = S.frozen && S.frozen.key === orderKey;
+    if (sameView && !S.resortNow) {
+      const pos = new Map(S.frozen.ids.map((id, i) => [id, i]));
+      list.sort((a, b) => (pos.has(a.l.id) ? pos.get(a.l.id) : 1e9) - (pos.has(b.l.id) ? pos.get(b.l.id) : 1e9));
+    }
+    S.resortNow = false;
+    S.frozen = { key: orderKey, ids: list.map((x) => x.l.id) };
+    $('#resortNote').hidden = S.frozen.ids.join() === trueIds.join();
+    const anchor = sameView ? pickAnchor() : null;
     $('#cards').innerHTML = list.map((x) => card(x.l, rg)).join('');
+    if (anchor) restoreAnchor(anchor);
     $('#empty').hidden = list.length > 0;
     $('#search').value = S.q;
     $('#showOff').checked = S.showOff;
@@ -752,6 +786,17 @@
     $('#setDlg').addEventListener('click', (e) => { if (e.target.matches('[data-close]')) $('#setDlg').close(); });
 
     const cards = $('#cards');
+    // Remember which house is being worked on, keep half-typed notes, and run a held-back redraw
+    // only after the person leaves the text box.
+    const touch = (e) => { const c = e.target.closest?.('.card'); if (c) S.editId = c.dataset.id; };
+    cards.addEventListener('pointerdown', touch, true);
+    cards.addEventListener('focusin', touch);
+    cards.addEventListener('input', (e) => {
+      const f = e.target.closest('form[data-note]');
+      if (f && e.target.tagName === 'TEXTAREA') (S.drafts ||= {})[f.dataset.note] = e.target.value;
+    });
+    cards.addEventListener('focusout', () => setTimeout(() => { if (S.pendingRender && !busyTyping()) { S.pendingRender = false; render(); } }, 150));
+    $('#resortNote').addEventListener('click', (e) => { if (e.target.id === 'resortBtn') { S.resortNow = true; render(); window.scrollTo({ top: 0 }); } });
     cards.addEventListener('toggle', (e) => { const d = e.target; if (d.dataset?.rating) d.open ? S.openRatings.add(d.dataset.rating) : S.openRatings.delete(d.dataset.rating); }, true);
     cards.addEventListener('change', async (e) => {
       const sel = e.target.closest('select[data-rate]'); if (!sel) return;
@@ -769,9 +814,15 @@
       e.preventDefault();
       const ta = $('textarea', f); const text = ta.value.trim(); if (!text) return;
       $$('button, textarea', f).forEach((x) => (x.disabled = true));
+      const draft = S.drafts?.[f.dataset.note];
+      if (S.drafts) delete S.drafts[f.dataset.note];
       try {
         await updateShared((d) => { d.notes ||= []; d.notes.push({ id: crypto.randomUUID(), lid: f.dataset.note, by: S.user, at: new Date().toISOString(), text }); }, `Note on ${f.dataset.note}`);
-      } catch (err) { alertMsg(err.message); $$('button, textarea', f).forEach((x) => (x.disabled = false)); }
+      } catch (err) {
+        alertMsg(err.message);
+        if (draft) (S.drafts ||= {})[f.dataset.note] = draft;
+        $$('button, textarea', f).forEach((x) => (x.disabled = false));
+      }
     });
     cards.addEventListener('click', async (e) => {
       const b = e.target.closest('[data-del-note]'); if (!b) return;
@@ -849,7 +900,10 @@
   let refreshing = false;
   async function refresh() {
     if (refreshing) return; refreshing = true;
-    try { await loadToken(); await loadAll(); render(); } catch { } finally { refreshing = false; }
+    try {
+      await loadToken(); await loadAll();
+      if (busyTyping()) S.pendingRender = true; else render(); // never redraw under someone's typing
+    } catch { } finally { refreshing = false; }
   }
   function start() {
     $('#lock').hidden = true; $('#main').hidden = false;
