@@ -10,6 +10,13 @@
     set: (k, v) => { try { localStorage.setItem(k, v); } catch { } },
     del: (k) => { try { localStorage.removeItem(k); } catch { } },
   };
+  // Forgive copy/paste from the secret file: a whole line like  "passphrase": "maple-otter-42",
+  // quotes, commas, spaces and capitals all get stripped (generated secrets are lowercase words, digits, dashes).
+  const cleanSecret = (v, key) => String(v || '')
+    .replace(new RegExp(`^\\s*"?${key}"?\\s*:\\s*`, 'i'), '')
+    .replace(/^[\s"'“”‘’,]+|[\s"'“”‘’,]+$/g, '')
+    .replace(/\s+/g, '')
+    .toLowerCase();
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const money = (n) => n == null ? '—' : '$' + Math.round(n).toLocaleString();
   const ACTIVE = /^(Active|Coming Soon)$/i;
@@ -349,7 +356,7 @@
     $('#lockForm').addEventListener('submit', async (e) => {
       e.preventDefault();
       const msg = $('#lockMsg'); msg.className = 'msg'; msg.textContent = 'Unlocking…';
-      try { await unlock($('#pass').value.trim()); start(); }
+      try { await unlock(cleanSecret($('#pass').value, 'passphrase')); start(); }
       catch (err) { msg.className = 'msg err'; msg.textContent = err.message; }
     });
     for (const t of $$('.tab')) t.addEventListener('click', () => { S.tab = t.dataset.tab; LS.set('hh-tab', S.tab); render(); });
@@ -362,7 +369,7 @@
       const v = e.submitter?.value; if (!v) return;
       if (v === ownerName() && LS.get('hh-owner') !== S.shared.owner.hash) {
         e.preventDefault();
-        const pin = prompt(`Enter ${v}'s owner PIN`);
+        const pin = cleanSecret(prompt(`Enter ${v}'s owner PIN`), 'ownerPin');
         if (!pin) return;
         if (await pinHash(pin, S.shared.owner) !== S.shared.owner.hash) { alert('That PIN is not right.'); return; }
         LS.set('hh-owner', S.shared.owner.hash);
