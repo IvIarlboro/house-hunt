@@ -101,6 +101,8 @@ details[open] > summary::before { content: "▾ "; }
 .room-high { border-left-color: var(--good); background: color-mix(in srgb, var(--good) 10%, var(--surface)); }
 .room-medium { border-left-color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, var(--surface)); }
 .card.low { opacity: .6; }
+.fixnote { color: var(--warn); font-size: 12px; }
+.sqftfix { margin: 8px 0 0; }
 .card.flash { animation: savedFlash 1.5s ease-out; }
 @keyframes savedFlash { 0%, 35% { box-shadow: 0 0 0 4px var(--accent), var(--shadow); } 100% { box-shadow: var(--shadow); } }.card.oh { border: 2px solid #c98a12; box-shadow: 0 0 0 3px color-mix(in srgb, #c98a12 25%, transparent), var(--shadow); }
 .card.oh.low { opacity: .85; }

@@ -205,10 +205,27 @@
   }
 
   // ---------- scoring ----------
-  const psfOf = (l) => { const f = parseFloat(l.detail?.fields?.['PSF Finished']); return Number.isFinite(f) && f > 0 ? f : (l.price && l.sqftFin ? l.price / l.sqftFin : null); };
+  // Finished square feet: a correction typed on the house wins; otherwise the listing's number, unless the
+  // listing contradicts itself (basement "Finished" but 0 finished basement sq ft, e.g. 7431 Johnson) — then total.
+  function sqftInfo(l) {
+    const f = l.detail?.fields || {}; const n = (x) => parseFloat(String(x ?? '').replace(/,/g, '')) || 0;
+    const listed = l.sqftFin || n(f['Living Area (SqFt Fin)']) || null;
+    const o = S.shared?.sqft?.[l.id];
+    if (o?.fin) return { fin: o.fin, listed, fixed: true, how: `corrected by ${o.by}` };
+    const b = f.Basement || '', tot = l.sqftTotal || n(f['Area (SqFt) Total']);
+    if (/\bfinished\b/i.test(b) && !/unfinished|partial/i.test(b) && n(f['Below Grade Finished Area']) === 0 && tot > (listed || 0)) {
+      return { fin: tot, listed, fixed: true, how: 'listing marks the basement finished but shows 0 finished basement sq ft, so the total is used' };
+    }
+    return { fin: listed, listed, fixed: false, how: '' };
+  }
+  const psfOf = (l) => {
+    const s = sqftInfo(l);
+    if (s.fixed && l.price && s.fin) return l.price / s.fin;
+    const f = parseFloat(l.detail?.fields?.['PSF Finished']); return Number.isFinite(f) && f > 0 ? f : (l.price && s.fin ? l.price / s.fin : null);
+  };
   const yearOf = (l) => l.yearBuilt || parseInt(l.detail?.fields?.['Year Built'], 10) || null;
   const ageNewer = () => (S.shared?.prefs?.ageDir || 'newer') !== 'older';
-  const sizeOf = (l) => l.sqftFin || parseFloat(String(l.detail?.fields?.['Living Area (SqFt Fin)'] || '').replace(/,/g, '')) || null;
+  const sizeOf = (l) => sqftInfo(l).fin;
   const taxOf = (l) => l.tax || parseFloat(String(l.detail?.fields?.['Tax Annual Amount'] || '').replace(/[$,]/g, '')) || null;
   function ranges(list) {
     const r = {};
@@ -512,10 +529,12 @@
         ${(() => { const r = room(l, S.mk); return r ? `<div class="room room-${r.level.toLowerCase()}" title="How much room there may be to offer under list. Not part of the rating."><b>Negotiating room: ${r.level}</b>${r.why.length ? ' · ' + esc(r.why.join(' · ')) : ''}</div>` : ''; })()}
         <div class="addr"><a href="${waze}" target="_blank" rel="noopener" title="Open in Waze">${esc(l.address)}</a><div class="facts">${esc(l.city || '')}</div></div>
         ${reactRow(l, canEdit)}
-        <div class="facts">${l.beds ?? '?'} bd · ${l.baths ?? '?'} ba · ${(() => { const fin = sizeOf(l), tot = l.sqftTotal; return fin ? `${Math.round(fin).toLocaleString()} sq ft finished${tot && tot > fin ? ` (${(tot - fin).toLocaleString()} more unfinished)` : ''}` : ''; })()} · Taxes ${money(taxOf(l))}${l.detail?.fields?.Cooling ? ' · ' + esc(l.detail.fields.Cooling) : ''}</div>
+        <div class="facts">${l.beds ?? '?'} bd · ${l.baths ?? '?'} ba · ${(() => { const si = sqftInfo(l), fin = si.fin, tot = l.sqftTotal; return fin ? `${Math.round(fin).toLocaleString()} sq ft finished${si.fixed ? ` <span class="fixnote" title="${esc(si.how)}">(listing said ${si.listed ? si.listed.toLocaleString() : '?'}; ${esc(si.how.startsWith('corrected') ? si.how : 'fixed')})</span>` : tot && tot > fin ? ` (${(tot - fin).toLocaleString()} more unfinished)` : ''}` : ''; })()} · Taxes ${money(taxOf(l))}${l.detail?.fields?.Cooling ? ' · ' + esc(l.detail.fields.Cooling) : ''}</div>
         <div class="chips"><span class="chip ${rvCls}">RV: ${esc(rv.label)}</span>${highlights(l)}</div>
         ${rv.why || rv.ev ? `<div class="facts">${esc(rv.why ? rv.why : rv.ev)}</div>` : ''}
-        <details ${S.openRatings.has(l.id) ? 'open' : ''} data-rating="${esc(l.id)}"><summary>Rating breakdown</summary><div class="rate">${rateRows(l, ev, canEdit)}</div>${howScoring()}</details>
+        <details ${S.openRatings.has(l.id) ? 'open' : ''} data-rating="${esc(l.id)}"><summary>Rating breakdown</summary><div class="rate">${rateRows(l, ev, canEdit)}</div>
+          <form class="conc sqftfix" data-sqft="${esc(l.id)}"><label>Finished sq ft correction<input inputmode="numeric" value="${S.shared?.sqft?.[l.id]?.fin ?? ''}" placeholder="${sqftInfo(l).fin ?? ''}" ${canEdit ? '' : 'disabled'}></label><button class="btn" ${canEdit ? '' : 'disabled'}>Save</button></form>
+          ${howScoring()}</details>
         <div class="notes">
           ${portalNotes.map((n) => `<div class="note portal"><div class="meta"><span>Portal note${n.date ? ' · ' + esc(n.date) : ''}</span></div>${esc(n.text)}</div>`).join('')}
           ${sharedNotes.map((n) => `<div class="note"><div class="meta"><span>${esc(n.by)} · ${esc(when(n.at))}</span>${n.by === S.user && canEdit ? `<button class="btn link" data-del-note="${esc(n.id)}">Delete</button>` : ''}</div>${esc(n.text)}</div>`).join('')}
@@ -756,6 +775,18 @@
     $('#clearFilters').addEventListener('click', () => { S.q = ''; S.showOff = true; S.ohOnly = false; LS.set('hh-hideOff', '0'); LS.set('hh-ohOnly', '0'); render(); });
     $('#ohOnly').addEventListener('change', (e) => { S.ohOnly = e.target.checked; LS.set('hh-ohOnly', S.ohOnly ? '1' : '0'); render(); });
     $('#cards').addEventListener('submit', async (e) => {
+      const fq = e.target.closest('form[data-sqft]');
+      if (fq) {
+        e.preventDefault();
+        const raw = $('input', fq).value.trim();
+        const fin = raw === '' ? null : Math.round(parseFloat(raw.replace(/[,\s]/g, '')));
+        if (raw !== '' && !(fin > 200 && fin < 30000)) { alertMsg('Finished sq ft should be a number like 3360.'); return; }
+        $$('button, input', fq).forEach((x) => (x.disabled = true));
+        try {
+          await updateShared((d) => { d.sqft ||= {}; if (fin == null) delete d.sqft[fq.dataset.sqft]; else d.sqft[fq.dataset.sqft] = { fin, by: S.user, at: new Date().toISOString() }; }, `Finished sq ft on ${fq.dataset.sqft}`);
+        } catch (err) { alertMsg(err.message); $$('button, input', fq).forEach((x) => (x.disabled = false)); }
+        return;
+      }
       const fi = e.target.closest('form[data-ins]');
       if (fi) {
         e.preventDefault();
