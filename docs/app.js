@@ -421,6 +421,18 @@
     return chips.join('');
   }
 
+  // Each person's own Love / Like / Hate on a house. Separate from the weighted rating.
+  const REACTS = { love: { icon: '❤️', label: 'Love', pts: 2 }, like: { icon: '👍', label: 'Like', pts: 1 }, hate: { icon: '👎', label: 'Hate', pts: -2 } };
+  const reactsOf = (l) => Object.entries(S.shared?.reacts?.[l.id] || {}).filter(([, r]) => REACTS[r.v]);
+  const loveScore = (l) => reactsOf(l).reduce((a, [, r]) => a + REACTS[r.v].pts, 0);
+  function reactRow(l, canEdit) {
+    const mine = S.shared?.reacts?.[l.id]?.[S.user]?.v;
+    const all = reactsOf(l).sort((a, b) => REACTS[b[1].v].pts - REACTS[a[1].v].pts || a[0].localeCompare(b[0]));
+    const btns = Object.entries(REACTS).map(([k, r]) => `<button type="button" class="rx ${mine === k ? 'on rx-' + k : ''}" data-react="${k}" data-lid="${esc(l.id)}" ${canEdit ? '' : 'disabled'} aria-pressed="${mine === k}" title="${r.label}${mine === k ? ' (tap again to clear)' : ''}">${r.icon} ${r.label}</button>`).join('');
+    const who = all.length ? `<span class="rx-who">${all.map(([u, r]) => `<span class="rx-chip rx-${r.v}">${REACTS[r.v].icon} ${esc(u)}</span>`).join('')}</span>` : '';
+    return `<div class="react">${btns}${who}</div>`;
+  }
+
   function howScoring() {
     const w = S.shared?.weights || DEFAULT_WEIGHTS;
     const tot = ITEMS.reduce((a, it) => a + Math.max(0, +w[it.k] || 0), 0) || 1;
@@ -486,6 +498,7 @@
         ${saleBlock(l, canEdit)}
         ${(() => { const r = room(l, S.mk); return r ? `<div class="room room-${r.level.toLowerCase()}" title="How much room there may be to offer under list. Not part of the rating."><b>Negotiating room: ${r.level}</b>${r.why.length ? ' · ' + esc(r.why.join(' · ')) : ''}</div>` : ''; })()}
         <div class="addr"><a href="${waze}" target="_blank" rel="noopener" title="Open in Waze">${esc(l.address)}</a><div class="facts">${esc(l.city || '')}</div></div>
+        ${reactRow(l, canEdit)}
         <div class="facts">${l.beds ?? '?'} bd · ${l.baths ?? '?'} ba · ${l.sqftTotal ? l.sqftTotal.toLocaleString() + ' total sqft' : ''} · Taxes ${money(taxOf(l))}${l.detail?.fields?.Cooling ? ' · ' + esc(l.detail.fields.Cooling) : ''}</div>
         <div class="chips"><span class="chip ${rvCls}">RV: ${esc(rv.label)}</span>${highlights(l)}</div>
         ${rv.why || rv.ev ? `<div class="facts">${esc(rv.why ? rv.why : rv.ev)}</div>` : ''}
@@ -558,6 +571,7 @@
       score: (x) => -evaluate(x.l, rg).total, price: (x) => x.l.price ?? 1e12, psf: (x) => psfOf(x.l) ?? 1e9,
       size: (x) => -(sizeOf(x.l) || 0), tax: (x) => taxOf(x.l) ?? 1e9, newest: (x) => -Date.parse(x.l.firstSeen || 0),
       payment: (x) => payment(x.l)?.total ?? 1e9,
+      love: (x) => -(loveScore(x.l) * 1000 + evaluate(x.l, rg).total),
       room: (x) => -(room(x.l, S.mk)?.pts ?? -99),
     }[S.sort] || ((x) => 0);
     list.sort((a, b) => key(a) - key(b));
@@ -632,6 +646,19 @@
     $('#lowNote').addEventListener('click', (e) => { if (e.target.id !== 'lowToggle') return; S.showLow = !S.showLow; LS.set('hh-showLow', S.showLow ? '1' : '0'); render(); });
     $('#cards').addEventListener('click', (e) => {
       const b = e.target.closest('[data-gal]'); if (b) { openGallery(b.dataset.gal); return; }
+      const rb = e.target.closest('[data-react]');
+      if (rb) {
+        if (!S.token || !S.user) { alertMsg('Pick your name (and turn on saving) to react.'); return; }
+        const { lid, react } = rb.dataset;
+        const cur = S.shared?.reacts?.[lid]?.[S.user]?.v;
+        rb.closest('.react').querySelectorAll('button').forEach((b) => (b.disabled = true));
+        updateShared((d) => {
+          d.reacts ||= {}; d.reacts[lid] ||= {};
+          if (cur === react) delete d.reacts[lid][S.user];
+          else d.reacts[lid][S.user] = { v: react, at: new Date().toISOString() };
+        }, `${S.user} ${cur === react ? 'cleared' : react} ${lid}`).catch((err) => { alertMsg(err.message); render(); });
+        return;
+      }
       const s = e.target.closest('[data-open-rating]');
       if (s) {
         const d = $(`details[data-rating="${CSS.escape(s.dataset.openRating)}"]`);

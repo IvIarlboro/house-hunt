@@ -101,6 +101,15 @@ details[open] > summary::before { content: "▾ "; }
 .room-high { border-left-color: var(--good); background: color-mix(in srgb, var(--good) 10%, var(--surface)); }
 .room-medium { border-left-color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, var(--surface)); }
 .card.low { opacity: .6; }
+.react { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.rx { font: inherit; font-size: 13px; border: 1px solid var(--line); background: var(--surface); color: var(--text); border-radius: 999px; padding: 3px 10px; cursor: pointer; }
+.rx:hover:not(:disabled) { border-color: var(--accent); }
+.rx.on { font-weight: 600; }
+.rx.rx-love { background: color-mix(in srgb, #d14b6b 18%, var(--surface)); border-color: #d14b6b; }
+.rx.rx-like { background: color-mix(in srgb, var(--good) 18%, var(--surface)); border-color: var(--good); }
+.rx.rx-hate { background: color-mix(in srgb, var(--bad) 18%, var(--surface)); border-color: var(--bad); }
+.rx-who { display: flex; flex-wrap: wrap; gap: 4px; margin-left: 4px; }
+.rx-chip { font-size: 12px; border-radius: 999px; padding: 2px 8px; background: var(--chip); }
 button.score { border: 0; font-family: inherit; cursor: pointer; padding: 0; line-height: 1.1; }
 button.score:hover { outline: 3px solid rgb(255 255 255 / .7); }
 .pay { font-size: 14px; display: grid; gap: 2px; }
