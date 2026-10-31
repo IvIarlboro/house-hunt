@@ -22,7 +22,7 @@
   const ACTIVE = /^(Active|Coming Soon)$/i;
 
   // ---------- rating model ----------
-  const DEFAULT_WEIGHTS = { rv: 27, kitchen: 17, layout: 5, primary: 5, laundry: 5, size: 8, psf: 8, tax: 5, ac: 5, multigen: 7, pool: 3, outdoor: 3, upgrades: 2, age: 4 };
+  const DEFAULT_WEIGHTS = { rv: 27, kitchen: 17, layout: 5, primary: 5, laundry: 5, fence: 5, size: 8, psf: 8, tax: 5, ac: 5, multigen: 7, pool: 3, outdoor: 3, upgrades: 2, age: 4 };
   // Jeremy (Oct 31 2026): if we don't know, it's "unknown" = 0 points, highlighted so someone fills it in.
   const ITEMS = [
     { k: 'rv', label: 'RV parking', opts: { fits: 'Fits', likely: 'Listed, unverified', tight: 'Tight', unknown: 'Unknown', no: 'No' }, score: { fits: 1, likely: 0.6, tight: 0.35, unknown: 0, no: 0 } },
@@ -30,6 +30,8 @@
     // Points per Jeremy: 1/2/3-story 5, tri-level 3, bi-level 0. Primary: main 5, other 0. Laundry: main or main+other 5, other 0.
     { k: 'layout', label: 'Layout (levels)', opts: { good: '1, 2 or 3-story', split: 'Tri-level / split', bilevel: 'Bi-level', unknown: 'Unknown' }, score: { good: 1, split: 3 / 5, bilevel: 0, unknown: 0 } },
     { k: 'primary', label: 'Primary bedroom', opts: { main: 'Main floor', other: 'Other floor', unknown: 'Unknown' }, score: { main: 1, other: 0, unknown: 0 } },
+    // Fence per Jeremy: fenced backyard 5, dog run only 3, broken or missing 0.
+    { k: 'fence', label: 'Fence', opts: { yard: 'Fenced backyard', dogrun: 'Dog run only', none: 'Broken / missing', unknown: 'Unknown' }, score: { yard: 1, dogrun: 3 / 5, none: 0, unknown: 0 } },
     { k: 'laundry', label: 'Laundry', opts: { main: 'Main floor', both: 'Main + other floor', other: 'Other floor', unknown: 'Unknown' }, score: { main: 1, both: 1, other: 0, unknown: 0 } },
     { k: 'size', label: 'Finished size' },
     { k: 'psf', label: '$/sqft value' },
@@ -261,6 +263,12 @@
     put('primary', /^main/i.test(pl) || /^one$/i.test(lv) ? 'main' : pl ? 'other' : 'unknown',
       pl ? `Primary bedroom: ${pl}` : /^one$/i.test(lv) ? 'One-level home' : 'Not in the room list');
     put('ac', !cooling ? 'unknown' : /central/i.test(cooling) ? 'yes' : /none/i.test(cooling) ? 'no' : 'partial', cooling ? 'Cooling: ' + cooling : 'Cooling not listed');
+    const fz = l.detail?.fields || {};
+    const fencing = fz.Fencing || '';
+    const dogRun = /dog run/i.test(`${fz['Exterior Features'] || ''} ${fz['Lot Features'] || ''} ${h.fence || ''}`);
+    const fencedText = /fenced|fencing|\bfence\b/i.test(h.fence || '') && !/dog run/i.test(h.fence || '');
+    put('fence', fencing && !/^none$/i.test(fencing) ? 'yard' : /^none$/i.test(fencing) ? (dogRun ? 'dogrun' : 'none') : dogRun ? 'dogrun' : fencedText ? 'yard' : 'unknown',
+      [fencing ? `Fencing: ${fencing}` : '', dogRun ? 'dog run mentioned' : '', !fencing && h.fence ? 'Description: ' + h.fence : ''].filter(Boolean).join(' · ') || 'Fencing not listed');
     const ll = h.laundryLevels || [];
     const onMain = ll.some((x) => /^main/i.test(x)), offMain = ll.some((x) => !/^main/i.test(x));
     put('laundry', onMain && offMain ? 'both' : onMain ? 'main' : offMain ? 'other' : 'unknown',

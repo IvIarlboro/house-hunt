@@ -272,6 +272,7 @@ export function parseDetail(html) {
       return {
         primaryLevel,
         laundryLevels,
+        fence: sentenceWith(remarks, /dog run|fenced|fencing|\bfence\b/i),
         openKitchen: sentenceWith(remarks, OPEN_KITCHEN),
         multigen: sentenceWith(remarks, MULTIGEN),
         rental: sentenceWith(remarks, RENTAL),
