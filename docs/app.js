@@ -50,7 +50,7 @@
     meta: null, key: null, token: null, repo: null,
     data: null, shared: null, sharedSha: null,
     user: LS.get('hh-user'), tab: LS.get('hh-tab', 'fav'), sort: LS.get('hh-sort', 'score'),
-    showOff: LS.get('hh-showOff') === '1', q: '', prevVisit: LS.get('hh-lastVisit'), openRatings: new Set(),
+    showOff: LS.get('hh-hideOff') !== '1', q: '', prevVisit: LS.get('hh-lastVisit'), openRatings: new Set(),
   };
   const defaultShared = () => ({ v: 1, users: [], weights: { ...DEFAULT_WEIGHTS }, ratings: {}, notes: [] });
   // Owner check: the owner's name and the rating weights are guarded by an owner PIN.
@@ -220,8 +220,50 @@
     return `${l.address} ${l.city} ${l.id} ${notes}`.toLowerCase().includes(S.q.toLowerCase());
   }
   const isNew = (l) => S.prevVisit && l.firstSeen > S.prevVisit;
+  // ---------- pending / sold ----------
+  const usDate = (s) => { const m = String(s || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/); if (!m) return null; const y = m[3].length === 2 ? 2000 + +m[3] : +m[3]; return new Date(y, m[1] - 1, +m[2]); };
+  const dayDiff = (a, b) => (a && b ? Math.round((b - a) / 864e5) : null);
+  const num$ = (s) => { const n = parseFloat(String(s ?? '').replace(/[$,]/g, '')); return Number.isFinite(n) ? n : null; };
+  function sale(l) {
+    const f = l.detail?.fields || {};
+    const st = l.status || '';
+    const listed = usDate(f['Listing Contract Date:']) || usDate(l.listDate);
+    const listPrice = num$(f['List Price:']);
+    const orig = l.originalPrice || num$(f['Original List Price']);
+    const conc = S.shared?.sales?.[l.id] || null;
+    if (/closed|sold/i.test(st)) {
+      const closed = usDate(l.closeDate || f['Close Date:']);
+      const ref = listPrice || orig;
+      return { kind: 'sold', sold: l.price, listPrice: ref, orig, closed, dom: dayDiff(listed, closed), pct: l.price && ref ? ((l.price - ref) / ref) * 100 : null, conc };
+    }
+    if (/pending|under contract/i.test(st)) {
+      const contract = usDate(l.contractDate || f['Purchase Contract Date:']);
+      return { kind: 'pending', listPrice: listPrice || l.price, orig, contract, dtc: dayDiff(listed, contract), conc };
+    }
+    return null;
+  }
+  function saleBlock(l, canEdit) {
+    const s = sale(l); if (!s) return '';
+    const d = (x) => (x ? x.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '?');
+    const c = s.conc?.amount;
+    const was = s.orig && s.listPrice && s.orig !== s.listPrice ? `, originally ${money(s.orig)}` : '';
+    let main;
+    if (s.kind === 'sold') {
+      const pct = s.pct == null ? '' : ` (${s.pct >= 0 ? '+' : ''}${s.pct.toFixed(1)}% vs list)`;
+      main = `<b>Sold ${money(s.sold)}</b> on ${d(s.closed)}${pct}<br>Listed ${money(s.listPrice)}${was}${s.dom != null ? ` · ${s.dom} days from listing to close` : ''}`;
+      if (c != null) main += `<br><b>Net ${money(s.sold - c)}</b> after ${money(c)} seller concessions`;
+    } else {
+      main = `<b>Under contract</b> ${d(s.contract)}${s.dtc != null ? ` after ${s.dtc} days` : ''}<br>Listed ${money(s.listPrice)}${was} · the sold price appears here when it closes`;
+      if (c != null) main += `<br>${money(c)} seller concessions`;
+    }
+    const by = s.conc ? ` <span class="muted small">Concessions entered by ${esc(s.conc.by)}.</span>` : '';
+    return `<div class="sale ${s.kind}">${main}${by}
+      <form class="conc" data-conc="${esc(l.id)}"><label>Concessions $<input inputmode="numeric" value="${c ?? ''}" placeholder="from Brooke" ${canEdit ? '' : 'disabled'}></label><button class="btn" ${canEdit ? '' : 'disabled'}>Save</button></form></div>`;
+  }
+
   function priceDrop(l) {
-    const ev = (l.history || []).filter((h) => h.what === 'price' && h.to < h.from).pop();
+    if (/closed|sold/i.test(l.status || '')) return 0;
+    const ev =(l.history || []).filter((h) => h.what === 'price' && h.to < h.from).pop();
     return ev && Date.now() - Date.parse(ev.at) < 21 * 864e5 ? ev.from - ev.to : 0;
   }
   const scoreColor = (n) => `hsl(${Math.round(Math.max(0, Math.min(100, n)) * 1.2)} 55% 38%)`;
@@ -283,12 +325,13 @@
           ${bucket[0] ? `<span class="badge ${bucket[1]}">${bucket[0]}</span>` : ''}
           ${isNew(l) ? '<span class="badge new">New since your last visit</span>' : ''}
           ${drop ? `<span class="badge drop">Price ↓ ${money(drop)}</span>` : ''}
-          ${off ? `<span class="badge off">${esc(l.offPortal ? 'Off portal' : l.status)}</span>` : ''}
+          ${off ? `<span class="badge off">${esc(l.offPortal ? 'Off portal' : /closed/i.test(l.status || '') ? 'Sold' : l.status)}</span>` : ''}
         </div>
         <div class="score" style="background:${scoreColor(ev.total)}" title="Rating out of 100">${ev.total}<small>/100</small></div>
       </div>
       <div class="body">
         <div class="price-row"><span class="price">${money(l.price)}</span><span class="psf">${ev.items.psf.label} · ${ev.items.size.label} fin</span></div>
+        ${saleBlock(l, canEdit)}
         <div class="addr"><a href="${waze}" target="_blank" rel="noopener" title="Open in Waze">${esc(l.address)}</a><div class="facts">${esc(l.city || '')}</div></div>
         <div class="facts">${l.beds ?? '?'} bd · ${l.baths ?? '?'} ba · ${l.sqftTotal ? l.sqftTotal.toLocaleString() + ' total sqft' : ''} · Taxes ${money(taxOf(l))}${l.detail?.fields?.Cooling ? ' · ' + esc(l.detail.fields.Cooling) : ''}</div>
         <div class="chips"><span class="chip ${rvCls}">RV: ${esc(rv.label)}</span>${highlights(l)}</div>
@@ -328,7 +371,7 @@
     $('#search').value = S.q;
     $('#showOff').checked = S.showOff;
     $('#sort').value = S.sort;
-    $('#clearFilters').hidden = !(S.q || S.showOff);
+    $('#clearFilters').hidden = !(S.q || !S.showOff);
     $('#whoBtn').textContent = S.user || 'Pick your name';
     $('#updated').textContent = `Listings changed ${ago(S.data.updatedAt)} · checked every 10 min`;
     const banner = $('#banner');
@@ -382,9 +425,24 @@
     });
     for (const t of $$('.tab')) t.addEventListener('click', () => { S.tab = t.dataset.tab; LS.set('hh-tab', S.tab); render(); });
     let st; $('#search').addEventListener('input', (e) => { clearTimeout(st); st = setTimeout(() => { S.q = e.target.value.trim(); render(); }, 150); });
-    $('#showOff').addEventListener('change', (e) => { S.showOff = e.target.checked; LS.set('hh-showOff', S.showOff ? '1' : '0'); render(); });
+    $('#showOff').addEventListener('change', (e) => { S.showOff = e.target.checked; LS.set('hh-hideOff', S.showOff ? '0' : '1'); render(); });
     $('#sort').addEventListener('change', (e) => { S.sort = e.target.value; LS.set('hh-sort', S.sort); render(); });
-    $('#clearFilters').addEventListener('click', () => { S.q = ''; S.showOff = false; LS.set('hh-showOff', '0'); render(); });
+    $('#clearFilters').addEventListener('click', () => { S.q = ''; S.showOff = true; LS.set('hh-hideOff', '0'); render(); });
+    $('#cards').addEventListener('submit', async (e) => {
+      const f = e.target.closest('form[data-conc]'); if (!f) return;
+      e.preventDefault();
+      const raw = $('input', f).value.trim();
+      const amount = raw === '' ? null : Math.round(parseFloat(raw.replace(/[$,\s]/g, '')));
+      if (raw !== '' && !Number.isFinite(amount)) { alertMsg('Concessions must be a dollar amount, like 10000.'); return; }
+      $$('button, input', f).forEach((x) => (x.disabled = true));
+      try {
+        await updateShared((d) => {
+          d.sales ||= {};
+          if (amount == null) delete d.sales[f.dataset.conc];
+          else d.sales[f.dataset.conc] = { amount, by: S.user, at: new Date().toISOString() };
+        }, `Concessions on ${f.dataset.conc}`);
+      } catch (err) { alertMsg(err.message); $$('button, input', f).forEach((x) => (x.disabled = false)); }
+    });
     $('#whoBtn').addEventListener('click', showWho);
     $('#whoForm').addEventListener('submit', async (e) => {
       const v = e.submitter?.value; if (!v) return;

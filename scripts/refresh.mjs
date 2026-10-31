@@ -117,7 +117,10 @@ async function main() {
       l.detail = {
         fields: d.fields, parking: d.parking, photoCount: d.photoCount, hints: d.hints,
       };
-      l.photo = d.photo || l.photo || l.photoThumb;
+      // The portal mints a new link (exk=) for the same photo each session; keep the old link
+      // unless it is a different photo, so quiet runs don't look like changes. Old links keep working.
+      const samePhoto = (a, b) => a && b && a.replace(/&exk=[^&]*/, '') === b.replace(/&exk=[^&]*/, '');
+      l.photo = samePhoto(l.photo, d.photo) ? l.photo : (d.photo || l.photo || l.photoThumb);
       l.portalNotes = d.notes.map((n) => ({ date: absDate(n.when, now), text: n.text, by: n.by }));
       l.detailAt = nowIso;
       await sleep(400);
@@ -130,6 +133,21 @@ async function main() {
     .filter((l) => l.bucket !== 'dislike')
     .map(({ detailAt, index, ...rest }) => rest)
     .sort((a, b) => a.id.localeCompare(b.id));
+  // Which fields changed per listing (for the log), so churn is easy to spot.
+  const strip = ({ detailAt, index, needsDetail, ...r }) => r;
+  const J = (x) => JSON.stringify(x);
+  const diffs = [];
+  for (const l of pubListings) {
+    const p = state.listings[l.id]; if (!p) continue;
+    const a = strip(p);
+    const ch = [...new Set([...Object.keys(a), ...Object.keys(l)])].filter((k) => J(a[k]) !== J(l[k])).flatMap((k) => {
+      if (k !== 'detail') return [k];
+      return [...new Set([...Object.keys(a.detail || {}), ...Object.keys(l.detail || {})])].filter((s) => J(a.detail?.[s]) !== J(l.detail?.[s]))
+        .map((s) => 'detail.' + s + (s === 'fields' || s === 'hints'
+          ? '(' + [...new Set([...Object.keys(a.detail?.[s] || {}), ...Object.keys(l.detail?.[s] || {})])].filter((f) => J(a.detail?.[s]?.[f]) !== J(l.detail?.[s]?.[f])).join('/') + ')' : ''));
+    });
+    if (ch.length) diffs.push(`${l.id}:${ch.join(',')}`);
+  }
   const body = { portalUrl: PORTAL_URL, listings: pubListings, unavailable: [...unavailable].sort() };
   const hash = createHash('sha256').update(JSON.stringify(body)).digest('hex');
 
@@ -141,14 +159,14 @@ async function main() {
   state = { hash, lastCheck: nowIso, listings: next };
   writeJson(STATE, state);
 
-  const summary = `checked ${listings.length} listings (+${unavailable.length} unavailable), details ${todo.length}, ${changed ? 'CHANGED' : 'no change'}${changes.length ? ': ' + changes.slice(0, 8).join('; ') : ''}`;
+  const summary = `checked ${listings.length} listings (+${unavailable.length} unavailable), details ${todo.length}, ${changed ? 'CHANGED' : 'no change'}${changes.length ? ': ' + changes.slice(0, 8).join('; ') : ''}${diffs.length ? ' | fields: ' + diffs.slice(0, 8).join(' ') : ''}`;
   if (changed && !NO_PUSH) {
     try {
       git('add', 'docs/data/listings.enc.json', 'docs/data/meta.json');
       const staged = git('diff', '--cached', '--name-only');
       if (staged) git('commit', '-q', '-m', `Listings update: ${changes.length ? changes.slice(0, 3).join('; ') : 'details refreshed'}`);
       const hasRemote = git('remote').length > 0;
-      if (hasRemote) { git('pull', '--rebase', '-q'); git('push', '-q'); }
+      if (hasRemote) { git('pull', '--rebase', '--autostash', '-q'); git('push', '-q'); }
       log(summary + (hasRemote ? ' - pushed' : ' - committed (no remote yet)'));
     } catch (e) { log(summary + ' - git failed: ' + (e.stderr || e.message).toString().trim().slice(0, 300)); process.exitCode = 1; }
   } else log(summary);

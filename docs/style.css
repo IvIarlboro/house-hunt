@@ -83,7 +83,13 @@ details[open] > summary::before { content: "▾ "; }
 .note button { font-size: 11px; padding: 0 4px; }
 .add-note { display: flex; gap: 6px; }
 .add-note textarea { flex: 1; min-height: 38px; resize: vertical; font-size: 14px; }
-.links { display: flex; gap: 12px; font-size: 13px; flex-wrap: wrap; }
+.sale { font-size: 13px; line-height: 1.5; border-radius: 8px; padding: 8px 10px; background: color-mix(in srgb, var(--info) 12%, var(--surface)); border: 1px solid color-mix(in srgb, var(--info) 30%, var(--line)); }
+.sale.sold { background: color-mix(in srgb, var(--good) 12%, var(--surface)); border-color: color-mix(in srgb, var(--good) 30%, var(--line)); }
+.sale .conc { display: flex; gap: 6px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
+.sale .conc label { display: flex; gap: 4px; align-items: center; color: var(--muted); }
+.sale .conc input { width: 110px; padding: 3px 8px; font-size: 13px; }
+.sale .conc .btn { padding: 3px 10px; font-size: 13px; }
+.links {display: flex; gap: 12px; font-size: 13px; flex-wrap: wrap; }
 
 .dlg { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--text); padding: 18px; width: min(420px, calc(100vw - 32px)); }
 .dlg.wide { width: min(640px, calc(100vw - 32px)); }

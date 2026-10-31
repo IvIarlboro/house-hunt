@@ -101,6 +101,7 @@ function parseListRecord(key, chunk) {
 
 const PARK_TYPES = /^(Garage|Carport|Recreational Vehicle|Off-Street|Covered|Driveway|Tandem|Other|Assigned|Unassigned|Attached|Detached|Heated|Oversized)/;
 const LABELS = [
+  'List Price:', 'Close Date:', 'Purchase Contract Date:', 'Listing Contract Date:',
   'Original List Price', 'Listing Contract Date', 'Levels', 'Year Built', 'Living Area (SqFt Fin)', 'Area (SqFt) Total',
   'Above Grade Fin Area (SqFt)', 'Below Grade Finished Area', 'PSF Finished', 'PSF Total', 'PSF Above Grade', 'Basement', 'Appliances',
   'Flooring', 'Interior Features', 'Exterior Features', 'Patio And Porch Features', 'Fencing', 'Lot Features', 'Parking Features',
