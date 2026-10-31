@@ -34,7 +34,8 @@
     { k: 'ac', label: 'A/C', opts: { yes: 'Central', partial: 'Partial / evap', no: 'None' }, score: { yes: 1, partial: 0.5, no: 0 } },
     // Jeremy's levels: rental 8, multigen 5, no 0 — scaled so a rental earns the item's full weight.
     { k: 'multigen', label: 'Multigen / rental unit', opts: { rental: 'Rental / ADU', multigen: 'Multigen', unknown: 'Unknown', no: 'No' }, score: { rental: 1, multigen: 5 / 8, unknown: 0.2, no: 0 } },
-    { k: 'pool', label: 'Pool / hot tub', opts: { pool: 'In-ground pool', hottub: 'Hot tub', none: 'None' }, score: { pool: 1, hottub: 0.4, none: 0 } },
+    // Pool only (Jeremy, Oct 31 2026): a hot tub earns nothing here; it still shows as a highlight chip.
+    { k: 'pool', label: 'Pool', opts: { pool: 'Pool', none: 'No pool' }, score: { pool: 1, none: 0, hottub: 0 } },
     { k: 'outdoor', label: 'Outdoor entertaining', opts: { great: 'Great', some: 'Some', none: 'Little' }, score: { great: 1, some: 0.5, none: 0 } },
     { k: 'upgrades', label: 'Recent upgrades', opts: { major: 'Major', some: 'Some', none: 'None' }, score: { major: 1, some: 0.5, none: 0 } },
     { k: 'age', label: 'Year built' },
@@ -241,7 +242,8 @@
     put('multigen', h.rental ? 'rental' : h.multigen ? 'multigen' : 'unknown',
       h.rental ? 'Description: ' + h.rental : h.multigen ? 'Description: ' + h.multigen : 'Nothing in the description');
     const pool = h.pool || [];
-    put('pool', pool.some((p) => /pool/.test(p)) ? 'pool' : pool.length ? 'hottub' : 'none', pool.join(', '));
+    const pools = pool.filter((p) => /pool/.test(p));
+    put('pool', pools.length ? 'pool' : 'none', pools.length ? pools.join(', ') : pool.length ? `Only ${pool.join(', ')} (doesn't count)` : '');
     const od = h.outdoor || [];
     put('outdoor', od.length >= 3 ? 'great' : od.length ? 'some' : 'none', od.join(', '));
     const up = h.upgrades || [];
