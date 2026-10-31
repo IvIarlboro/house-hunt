@@ -40,7 +40,17 @@ export class Portal {
       const rec = parseListRecord(parts[i], parts[i + 1]);
       if (rec) listings.push(rec);
     }
-    const unavailable = [...html.matchAll(/Listing ID (?:<b>)?([A-Z]{0,3}\d{5,9})(?:<\/b>)?\. This listing is currently in a Status that is not available/g)].map((m) => m[1]);
+    // Gather every photo link on the page by listing key (the carousel data sits outside each record block).
+    const byKey = new Map();
+    for (const m of html.matchAll(/GetMedia\.ashx\?Key=(\d+)&(?:amp;)?TableID=9&(?:amp;)?Type=1&(?:amp;)?Number=(\d+)&(?:amp;)?Size=(\d)&(?:amp;)?exk=([0-9a-f]+)/g)) {
+      let med = byKey.get(m[1]); if (!med) byKey.set(m[1], (med = new Map()));
+      const e = med.get(+m[2]) || {}; e['s' + m[3]] = m[4]; med.set(+m[2], e);
+    }
+    for (const l of listings) {
+      const med = byKey.get(l.key);
+      if (med) l.media = { key: l.key, p: [...med.entries()].sort((a, b) => a[0] - b[0]).filter(([, e]) => e.s2 || e.s4).map(([n, e]) => [n, e.s2 || '', e.s4 || '']) };
+    }
+    const unavailable =[...html.matchAll(/Listing ID (?:<b>)?([A-Z]{0,3}\d{5,9})(?:<\/b>)?\. This listing is currently in a Status that is not available/g)].map((m) => m[1]);
     if (!listings.length) throw new Error('portal list parsed 0 listings (page layout changed?)');
     return { listings, unavailable };
   }
@@ -72,6 +82,7 @@ function parseListRecord(key, chunk) {
     const e = med.get(+m[2]) || {}; e['s' + m[3]] = m[4]; med.set(+m[2], e);
   }
   const media = { key, p: [...med.entries()].sort((a, b) => a[0] - b[0]).filter(([, e]) => e.s2 || e.s4).map(([n, e]) => [n, e.s2 || '', e.s4 || '']) };
+  // (list() replaces this with the full set gathered from the whole page — most carousel links live outside the record block.)
   const L = toLines(chunk);
   const after = (label) => { const i = L.indexOf(label); return i >= 0 ? L[i + 1] : null; };
   const before = (label) => { const i = L.indexOf(label); return i > 0 ? L[i - 1] : null; };
