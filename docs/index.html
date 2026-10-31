@@ -7,7 +7,7 @@
 <meta name="referrer" content="no-referrer">
 <title>House Hunt</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M4 15 16 5l12 10v12H19v-8h-6v8H4z' fill='%232f6f5e'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="style.css?v=17">
+<link rel="stylesheet" href="style.css?v=20">
 </head>
 <body>
 <div id="app">
@@ -45,6 +45,7 @@
         <input id="search" type="search" placeholder="Search address, city, notes">
         <button id="clearFilters" class="btn link" type="button" hidden>✕ Clear filters</button>
         <label class="chk"><input id="showOff" type="checkbox"> Show pending/closed</label>
+        <label class="chk"><input id="ohOnly" type="checkbox"> Open houses only <span id="ohCount"></span></label>
         <label class="sort">Sort
           <select id="sort">
             <option value="score">Rating</option>
@@ -139,6 +140,6 @@
     <p id="setMsg" class="msg" role="status"></p>
   </dialog>
 </div>
-<script src="app.js?v=19"></script>
+<script src="app.js?v=20"></script>
 </body>
 </html>

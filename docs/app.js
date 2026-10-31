@@ -52,7 +52,7 @@
     meta: null, key: null, token: null, repo: null,
     data: null, shared: null, sharedSha: null,
     user: LS.get('hh-user'), tab: LS.get('hh-tab', 'fav'), sort: LS.get('hh-sort', 'score'),
-    showOff: LS.get('hh-hideOff') !== '1', showLow: LS.get('hh-showLow') === '1', q: '', prevVisit: LS.get('hh-lastVisit'), openRatings: new Set(),
+    showOff: LS.get('hh-hideOff') !== '1', ohOnly: LS.get('hh-ohOnly') === '1', showLow: LS.get('hh-showLow') === '1', q: '', prevVisit: LS.get('hh-lastVisit'), openRatings: new Set(),
   };
   const defaultShared = () => ({ v: 1, users: [], weights: { ...DEFAULT_WEIGHTS }, ratings: {}, notes: [] });
   // Payment estimate. Rates come from Freddie Mac's weekly survey (excellent credit, ~20% down), refreshed by
@@ -264,7 +264,12 @@
 
   // ---------- rendering ----------
   const inTab = (l) => S.tab === 'all' ? true : l.bucket === S.tab;
-  const showable = (l) => l.bucket !== 'dislike' && (S.showOff || (ACTIVE.test(l.status || '') && !l.offPortal));
+  const showable = (l) => l.bucket !== 'dislike' && (S.showOff || (ACTIVE.test(l.status || '') && !l.offPortal)) && (!S.ohOnly || upcomingOH(l).length > 0);
+  // Open houses still to come (today or later, local date).
+  function upcomingOH(l) {
+    const d = new Date(); const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    return (l.openHouses || []).filter((o) => !o.date || o.date >= today);
+  }
   function matches(l) {
     if (!S.q) return true;
     const notes = [...(l.portalNotes || []), ...((S.shared?.notes || []).filter((n) => n.lid === l.id))].map((n) => n.text).join(' ');
@@ -478,11 +483,13 @@
     const rvCls = { fits: 'good', likely: 'warn', tight: 'warn', no: 'bad' }[rv.v] || '';
     const sharedNotes = (S.shared?.notes || []).filter((n) => n.lid === l.id).sort((a, b) => a.at.localeCompare(b.at));
     const portalNotes = l.portalNotes || [];
-    return `<article class="card ${off ? 'dim' : ''} ${ev.total < LOW_SCORE && l.bucket !== 'fav' ? 'low' : ''}" data-id="${esc(l.id)}">
+    const oh = upcomingOH(l);
+    return `<article class="card ${off ? 'dim' : ''} ${ev.total < LOW_SCORE && l.bucket !== 'fav' ? 'low' : ''} ${oh.length ? 'oh' : ''}" data-id="${esc(l.id)}">
       <div class="photo">
         ${first ? `<button class="ph-open" type="button" data-gal="${esc(l.id)}" aria-label="See all ${nPhotos} photos"><img loading="lazy" referrerpolicy="no-referrer" src="${esc(first.t)}" srcset="${esc(first.t)} 296w, ${esc(first.f)} 1600w" sizes="(max-width: 460px) 100vw, 420px" data-thumb="${esc(l.photoThumb || '')}" alt="">${nPhotos > 1 ? `<span class="ph-count">${nPhotos} photos</span>` : ''}</button>` : ''}
         <div class="badges">
           ${bucket[0] ? `<span class="badge ${bucket[1]}">${bucket[0]}</span>` : ''}
+          ${oh.length ? `<span class="badge ohb">Open house ${esc(oh[0].text.split(',')[0])}</span>` : ''}
           ${isNew(l) ? '<span class="badge new">New since your last visit</span>' : ''}
           ${drop ? `<span class="badge drop">Price ↓ ${money(drop)}</span>` : ''}
           ${off ? `<span class="badge off">${esc(l.offPortal ? 'Off portal' : /closed/i.test(l.status || '') ? 'Sold' : l.status)}</span>` : ''}
@@ -490,7 +497,8 @@
         <button class="score" type="button" data-open-rating="${esc(l.id)}" style="background:${scoreColor(ev.total)}" title="Rating out of 100. Tap for the breakdown.">${ev.total}<small>/100</small></button>
       </div>
       <div class="body">
-        <div class="price-row"><span class="price">${money(l.price)}</span><span class="psf">${ev.items.psf.label} · ${ev.items.size.label} fin</span></div>
+        <div class="price-row"><span class="price">${money(l.price)}</span><span class="psf">${ev.items.size.label} finished · ${ev.items.psf.label} finished</span></div>
+        ${oh.length ? `<div class="oh-line">🏡 <b>Open house:</b> ${oh.map((o) => esc(o.text)).join(' · ')}</div>` : ''}
         ${(() => {
           if (/closed|sold/i.test(l.status || '')) return '';
           const p = payment(l); if (!p) return '';
@@ -504,7 +512,7 @@
         ${(() => { const r = room(l, S.mk); return r ? `<div class="room room-${r.level.toLowerCase()}" title="How much room there may be to offer under list. Not part of the rating."><b>Negotiating room: ${r.level}</b>${r.why.length ? ' · ' + esc(r.why.join(' · ')) : ''}</div>` : ''; })()}
         <div class="addr"><a href="${waze}" target="_blank" rel="noopener" title="Open in Waze">${esc(l.address)}</a><div class="facts">${esc(l.city || '')}</div></div>
         ${reactRow(l, canEdit)}
-        <div class="facts">${l.beds ?? '?'} bd · ${l.baths ?? '?'} ba · ${l.sqftTotal ? l.sqftTotal.toLocaleString() + ' total sqft' : ''} · Taxes ${money(taxOf(l))}${l.detail?.fields?.Cooling ? ' · ' + esc(l.detail.fields.Cooling) : ''}</div>
+        <div class="facts">${l.beds ?? '?'} bd · ${l.baths ?? '?'} ba · ${(() => { const fin = sizeOf(l), tot = l.sqftTotal; return fin ? `${Math.round(fin).toLocaleString()} sq ft finished${tot && tot > fin ? ` (${(tot - fin).toLocaleString()} more unfinished)` : ''}` : ''; })()} · Taxes ${money(taxOf(l))}${l.detail?.fields?.Cooling ? ' · ' + esc(l.detail.fields.Cooling) : ''}</div>
         <div class="chips"><span class="chip ${rvCls}">RV: ${esc(rv.label)}</span>${highlights(l)}</div>
         ${rv.why || rv.ev ? `<div class="facts">${esc(rv.why ? rv.why : rv.ev)}</div>` : ''}
         <details ${S.openRatings.has(l.id) ? 'open' : ''} data-rating="${esc(l.id)}"><summary>Rating breakdown</summary><div class="rate">${rateRows(l, ev, canEdit)}</div>${howScoring()}</details>
@@ -569,7 +577,8 @@
     $('#market').innerHTML = marketPanel(S.mk);
     const scored = all.filter(showable).filter(matches).map((l) => ({ l, total: evaluate(l, rg).total }));
     // Favorites always show, whatever they score (Jeremy's rule).
-    const isLow = (x) => x.total < LOW_SCORE && x.l.bucket !== 'fav';
+    // Favorites and Possibilities always show (Jeremy); only new unsorted houses under 50 are hidden.
+    const isLow = (x) => x.total < LOW_SCORE && x.l.bucket !== 'fav' && x.l.bucket !== 'poss';
     const lowHere = scored.filter((x) => isLow(x) && inTab(x.l)).length;
     const base = scored.filter((x) => S.showLow || !isLow(x)).map((x) => x.l);
     const lowNote = $('#lowNote');
@@ -598,7 +607,10 @@
     $('#sort').value = S.sort;
     const lo = loanOptions(), lc = loanChoice();
     $('#loanOpt').innerHTML = lo.map((o) => `<option value="${o.k}" ${o === lc ? 'selected' : ''} ${o.note ? `title="${esc(o.note)}"` : ''}>${esc(o.label)}</option>`).join('');
-    $('#clearFilters').hidden = !(S.q || !S.showOff);
+    $('#clearFilters').hidden = !(S.q || !S.showOff || S.ohOnly);
+    $('#ohOnly').checked = S.ohOnly;
+    const ohCount = all.filter((l) => upcomingOH(l).length).length;
+    $('#ohCount').textContent = ohCount ? `(${ohCount})` : '';
     $('#whoBtn').textContent = S.user || 'Pick your name';
     $('#updated').textContent = `Listings changed ${ago(S.data.updatedAt)} · checked every 10 min`;
     const banner = $('#banner');
@@ -690,7 +702,8 @@
     $('#galDlg').addEventListener('touchend', (e) => { if (tx == null) return; const dx = e.changedTouches[0].clientX - tx; tx = null; if (Math.abs(dx) > 40) drawGal(dx < 0 ? 1 : -1); });
     $('#galImg').addEventListener('click', (e) => { const r = e.target.getBoundingClientRect(); drawGal(e.clientX - r.left < r.width / 3 ? -1 : 1); });
     $('#market').addEventListener('toggle', (e) => { if (e.target.matches?.('details.market')) LS.set('hh-mkt', e.target.open ? '1' : '0'); }, true);
-    $('#clearFilters').addEventListener('click', () => { S.q = ''; S.showOff = true; LS.set('hh-hideOff', '0'); render(); });
+    $('#clearFilters').addEventListener('click', () => { S.q = ''; S.showOff = true; S.ohOnly = false; LS.set('hh-hideOff', '0'); LS.set('hh-ohOnly', '0'); render(); });
+    $('#ohOnly').addEventListener('change', (e) => { S.ohOnly = e.target.checked; LS.set('hh-ohOnly', S.ohOnly ? '1' : '0'); render(); });
     $('#cards').addEventListener('submit', async (e) => {
       const fi = e.target.closest('form[data-ins]');
       if (fi) {

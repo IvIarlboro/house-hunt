@@ -243,6 +243,8 @@ export function parseDetail(html) {
     tours,
     geo,
     photoCount: new Set(imgs.map((u) => u.match(/Number=(\d+)/)?.[1])).size,
+    // Lines like "Open House:  Sat Oct 31, 11:00AM-1:00PM" near the top of the detail page.
+    openHouses: [...new Set(L.map((x) => x.match(/^Open House:\s*(.+)$/i)?.[1]?.replace(/\s+/g, ' ').trim()).filter(Boolean))],
     hints: (() => {
       const feat = ['Exterior Features', 'Patio And Porch Features', 'Pool Features', 'Spa Features', 'Interior Features', 'Appliances', 'Roof', 'Property Condition', 'Outbuildings', 'Lot Features']
         .map((k) => v[k] || '').join('. ');

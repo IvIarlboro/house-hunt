@@ -22,7 +22,7 @@ const HOME = process.env.HH_STATE_DIR || join(process.env.USERPROFILE || process
 const SECRET = join(HOME, 'secret.json');
 const STATE = join(HOME, 'state.json');
 const LOG = join(HOME, 'refresh.log');
-const STALE_PER_RUN = 3;
+const STALE_PER_RUN = 6; // ~every listing's detail re-read about hourly (catches new open houses and notes)
 const MAX_DETAILS_PER_RUN = 12;
 const args = new Set(process.argv.slice(2));
 const NO_PUSH = args.has('--no-push');
@@ -91,6 +91,16 @@ async function fetchPmms(prev) {
       r30: n(last[1]), r15: n(last[3]), r30Prev: before ? n(before[1]) : null, r15Prev: before ? n(before[3]) : null,
     };
   } catch (e) { log('Freddie Mac rates fetch failed: ' + e.message); if (!prev) return null; const { fetchedAt, arm76, armSource, armDate, ...p } = prev; return p; }
+}
+
+// "Sat Oct 31, 11:00AM-1:00PM" -> { date: '2026-10-31', text: 'Sat Oct 31, 11:00AM-1:00PM' } (year rolls over in Dec→Jan).
+function openHouse(text, now = new Date()) {
+  const m = text.match(/^\w{3}\s+(\w{3})\s+(\d{1,2})/);
+  const mi = m ? ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'].indexOf(m[1].toLowerCase()) : -1;
+  if (mi < 0) return { text };
+  let y = now.getFullYear();
+  if (mi < now.getMonth() - 6) y++;
+  return { date: `${y}-${String(mi + 1).padStart(2, '0')}-${m[2].padStart(2, '0')}`, text };
 }
 
 function git(...a) {
@@ -169,6 +179,7 @@ async function main() {
       // about an hour, so they are not stored.
       delete l.photo; delete l.photos; delete l.photosAt;
       l.tours = d.tours || [];
+      l.openHouses = (d.openHouses || []).map((t) => openHouse(t, now));
       if (d.geo) l.geo = d.geo;
       l.portalNotes = d.notes.map((n) => ({ date: absDate(n.when, now), text: n.text, by: n.by }));
       l.detailAt = nowIso;

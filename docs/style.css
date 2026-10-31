@@ -101,6 +101,10 @@ details[open] > summary::before { content: "▾ "; }
 .room-high { border-left-color: var(--good); background: color-mix(in srgb, var(--good) 10%, var(--surface)); }
 .room-medium { border-left-color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, var(--surface)); }
 .card.low { opacity: .6; }
+.card.oh { border: 2px solid #c98a12; box-shadow: 0 0 0 3px color-mix(in srgb, #c98a12 25%, transparent), var(--shadow); }
+.card.oh.low { opacity: .85; }
+.badge.ohb { background: #c98a12; color: #1b1300; }
+.oh-line { font-size: 14px; padding: 6px 10px; border-radius: 8px; background: color-mix(in srgb, #c98a12 16%, var(--surface)); border: 1px solid color-mix(in srgb, #c98a12 45%, var(--line)); }
 .react { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .rx { font: inherit; font-size: 13px; border: 1px solid var(--line); background: var(--surface); color: var(--text); border-radius: 999px; padding: 3px 10px; cursor: pointer; }
 .rx:hover:not(:disabled) { border-color: var(--accent); }
