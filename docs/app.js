@@ -22,7 +22,7 @@
   const ACTIVE = /^(Active|Coming Soon)$/i;
 
   // ---------- rating model ----------
-  const DEFAULT_WEIGHTS = { rv: 27, kitchen: 17, layout: 9, primary: 6, size: 8, psf: 8, tax: 5, ac: 5, multigen: 7, pool: 3, outdoor: 3, upgrades: 2 };
+  const DEFAULT_WEIGHTS = { rv: 27, kitchen: 17, layout: 9, primary: 6, size: 8, psf: 8, tax: 5, ac: 5, multigen: 7, pool: 3, outdoor: 3, upgrades: 2, age: 4 };
   const ITEMS = [
     { k: 'rv', label: 'RV parking', opts: { fits: 'Fits', likely: 'Listed, unverified', tight: 'Tight', unknown: 'Unknown', no: 'No' }, score: { fits: 1, likely: 0.6, tight: 0.35, unknown: 0.2, no: 0 } },
     { k: 'kitchen', label: 'Open kitchen', opts: { yes: 'Yes', likely: 'Likely', partial: 'Partly', unknown: 'Unknown', no: 'No' }, score: { yes: 1, likely: 0.7, partial: 0.5, unknown: 0.35, no: 0 } },
@@ -36,6 +36,7 @@
     { k: 'pool', label: 'Pool / hot tub', opts: { pool: 'In-ground pool', hottub: 'Hot tub', none: 'None' }, score: { pool: 1, hottub: 0.4, none: 0 } },
     { k: 'outdoor', label: 'Outdoor entertaining', opts: { great: 'Great', some: 'Some', none: 'Little' }, score: { great: 1, some: 0.5, none: 0 } },
     { k: 'upgrades', label: 'Recent upgrades', opts: { major: 'Major', some: 'Some', none: 'None' }, score: { major: 1, some: 0.5, none: 0 } },
+    { k: 'age', label: 'Year built' },
   ];
 
   // Items ordered by their current weight, most points first (ties keep the list order above).
@@ -158,11 +159,13 @@
 
   // ---------- scoring ----------
   const psfOf = (l) => { const f = parseFloat(l.detail?.fields?.['PSF Finished']); return Number.isFinite(f) && f > 0 ? f : (l.price && l.sqftFin ? l.price / l.sqftFin : null); };
+  const yearOf = (l) => l.yearBuilt || parseInt(l.detail?.fields?.['Year Built'], 10) || null;
+  const ageNewer = () => (S.shared?.prefs?.ageDir || 'newer') !== 'older';
   const sizeOf = (l) => l.sqftFin || parseFloat(String(l.detail?.fields?.['Living Area (SqFt Fin)'] || '').replace(/,/g, '')) || null;
   const taxOf = (l) => l.tax || parseFloat(String(l.detail?.fields?.['Tax Annual Amount'] || '').replace(/[$,]/g, '')) || null;
   function ranges(list) {
     const r = {};
-    for (const [k, f] of [['psf', psfOf], ['size', sizeOf], ['tax', taxOf]]) {
+    for (const [k, f] of [['psf', psfOf], ['size', sizeOf], ['tax', taxOf], ['year', yearOf]]) {
       const vals = list.map(f).filter((x) => x != null);
       r[k] = vals.length ? [Math.min(...vals), Math.max(...vals)] : [0, 0];
     }
@@ -200,6 +203,8 @@
     out.size = { s: rel(size, rg.size, true), label: size ? `${Math.round(size).toLocaleString()} sqft` : '—', ev: `Your list runs ${Math.round(rg.size[0]).toLocaleString()}–${Math.round(rg.size[1]).toLocaleString()} finished sqft` };
     out.psf = { s: rel(psf, rg.psf, false), label: psf ? `$${Math.round(psf)}/sqft` : '—', ev: `Your list runs $${Math.round(rg.psf[0])}–$${Math.round(rg.psf[1])} per finished sqft` };
     out.tax = { s: rel(tax, rg.tax, false), label: tax ? `${money(tax)}/yr` : '—', ev: `Your list runs ${money(rg.tax[0])}–${money(rg.tax[1])} a year` };
+    const yr = yearOf(l);
+    out.age = { s: rel(yr, rg.year, ageNewer()), label: yr ? `Built ${yr}` : '—', ev: `Your list runs ${rg.year[0]}–${rg.year[1]} · ${ageNewer() ? 'newer' : 'older'} scores higher` };
     const w = S.shared?.weights || DEFAULT_WEIGHTS;
     let tot = 0, wsum = 0;
     for (const it of ITEMS) { const wt = +w[it.k] || 0; tot += wt * out[it.k].s; wsum += wt; out[it.k].pts = wt * out[it.k].s; out[it.k].w = wt; }
@@ -347,7 +352,9 @@
       : `<li>${esc(u)} <button class="btn link" data-rm-user="${esc(u)}" ${S.token ? '' : 'disabled'} title="Remove">✕</button></li>`).join('');
     const w = S.shared?.weights || DEFAULT_WEIGHTS;
     const own = isOwner();
-    $('#weights').innerHTML = byWeight().map((it) => `<label for="w-${it.k}">${esc(it.label)}</label><input id="w-${it.k}" type="number" min="0" max="100" step="1" value="${+w[it.k] || 0}" data-w="${it.k}" ${own ? '' : 'disabled'}>`).join('');
+    $('#weights').innerHTML = byWeight().map((it) => `<label for="w-${it.k}">${esc(it.label)}</label><input id="w-${it.k}" type="number" min="0" max="100" step="1" value="${+w[it.k] || 0}" data-w="${it.k}" ${own ? '' : 'disabled'}><span class="pct" data-pct="${it.k}"></span>`).join('');
+    $('#ageDir').value = ageNewer() ? 'newer' : 'older';
+    $('#ageDir').disabled = !own;
     updateWTotal();
     $('#wOwner').textContent = own ? '' : `Only ${ownerName() || 'the owner'} can change the rating system.`;
     $('#tokenState').textContent = S.token ? 'Saving is on. A write token is stored (encrypted).' : 'Saving is off. Paste a write token to turn it on.';
@@ -355,7 +362,15 @@
     $('#resetWeights').disabled = !own;
     $('#tokenForm').hidden = !!S.token && !own;
   }
-  function updateWTotal() { const t = $$('#weights input').reduce((a, i) => a + (+i.value || 0), 0); $('#wTotal').textContent = `Total ${t} points (scaled to 100)`; }
+  function updateWTotal() {
+    const ins = $$('#weights input');
+    const t = ins.reduce((a, i) => a + Math.max(0, +i.value || 0), 0);
+    for (const i of ins) {
+      const p = t ? (Math.max(0, +i.value || 0) / t) * 100 : 0;
+      $(`[data-pct="${i.dataset.w}"]`).textContent = `${p >= 10 || p === 0 ? Math.round(p) : p.toFixed(1)}%`;
+    }
+    $('#wTotal').textContent = `Total ${t} points, shown as each item's share of the score`;
+  }
 
   // ---------- events ----------
   function wire() {
@@ -431,10 +446,11 @@
     $('#saveWeights').addEventListener('click', async () => {
       if (!isOwner()) { settingsMsg(`Only ${ownerName() || 'the owner'} can change the rating system.`, 'err'); return; }
       const w =Object.fromEntries($$('#weights input').map((i) => [i.dataset.w, Math.max(0, Math.min(100, Math.round(+i.value || 0)))]));
-      try { await updateShared((d) => { d.weights = w; }, 'Change rating weights'); settingsMsg('Weights saved.', 'ok'); }
+      const ageDir = $('#ageDir').value === 'older' ? 'older' : 'newer';
+      try { await updateShared((d) => { d.weights = w; d.prefs = { ...(d.prefs || {}), ageDir }; }, 'Change rating weights'); settingsMsg('Weights saved.', 'ok'); }
       catch (err) { settingsMsg(err.message, 'err'); }
     });
-    $('#resetWeights').addEventListener('click', () => { for (const i of $$('#weights input')) i.value = DEFAULT_WEIGHTS[i.dataset.w]; updateWTotal(); });
+    $('#resetWeights').addEventListener('click', () => { for (const i of $$('#weights input')) i.value = DEFAULT_WEIGHTS[i.dataset.w]; $('#ageDir').value = 'newer'; updateWTotal(); });
     $('#tokenForm').addEventListener('submit', async (e) => {
       e.preventDefault();
       const tok = $('#tokenIn').value.trim(); if (!tok) return;
