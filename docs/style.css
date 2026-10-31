@@ -101,6 +101,9 @@ details[open] > summary::before { content: "▾ "; }
 .room-high { border-left-color: var(--good); background: color-mix(in srgb, var(--good) 10%, var(--surface)); }
 .room-medium { border-left-color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, var(--surface)); }
 .card.low { opacity: .6; }
+.rate .unk { color: var(--warn); font-weight: 600; }
+.rate select.unk { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, var(--surface)); }
+.unk-chip { font-size: 12px; font-weight: 600; color: #1b1300; background: color-mix(in srgb, var(--warn) 70%, #fff); border-radius: 999px; padding: 1px 8px; margin-left: 6px; }
 .fixnote { color: var(--warn); font-size: 12px; }
 .sqftfix { margin: 8px 0 0; }
 .card.flash { animation: savedFlash 1.5s ease-out; }

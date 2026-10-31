@@ -22,18 +22,21 @@
   const ACTIVE = /^(Active|Coming Soon)$/i;
 
   // ---------- rating model ----------
-  const DEFAULT_WEIGHTS = { rv: 27, kitchen: 17, layout: 9, primary: 6, size: 8, psf: 8, tax: 5, ac: 5, multigen: 7, pool: 3, outdoor: 3, upgrades: 2, age: 4 };
+  const DEFAULT_WEIGHTS = { rv: 27, kitchen: 17, layout: 5, primary: 5, laundry: 5, size: 8, psf: 8, tax: 5, ac: 5, multigen: 7, pool: 3, outdoor: 3, upgrades: 2, age: 4 };
+  // Jeremy (Oct 31 2026): if we don't know, it's "unknown" = 0 points, highlighted so someone fills it in.
   const ITEMS = [
-    { k: 'rv', label: 'RV parking', opts: { fits: 'Fits', likely: 'Listed, unverified', tight: 'Tight', unknown: 'Unknown', no: 'No' }, score: { fits: 1, likely: 0.6, tight: 0.35, unknown: 0.2, no: 0 } },
-    { k: 'kitchen', label: 'Open kitchen', opts: { yes: 'Yes', likely: 'Likely', partial: 'Partly', unknown: 'Unknown', no: 'No' }, score: { yes: 1, likely: 0.7, partial: 0.5, unknown: 0.35, no: 0 } },
-    { k: 'layout', label: 'Layout (levels)', opts: { good: 'Ranch / 2-story', split: 'Split / tri-level', bilevel: 'Bi-level' }, score: { good: 1, split: 0.6, bilevel: 0 } },
-    { k: 'primary', label: 'Primary bedroom on main', opts: { main: 'Main floor', unknown: 'Unknown', other: 'Not main floor' }, score: { main: 1, unknown: 0.4, other: 0 } },
+    { k: 'rv', label: 'RV parking', opts: { fits: 'Fits', likely: 'Listed, unverified', tight: 'Tight', unknown: 'Unknown', no: 'No' }, score: { fits: 1, likely: 0.6, tight: 0.35, unknown: 0, no: 0 } },
+    { k: 'kitchen', label: 'Open kitchen', opts: { yes: 'Yes', likely: 'Likely', partial: 'Partly', unknown: 'Unknown', no: 'No' }, score: { yes: 1, likely: 0.7, partial: 0.5, unknown: 0, no: 0 } },
+    // Points per Jeremy: 1/2/3-story 5, tri-level 3, bi-level 0. Primary: main 5, other 0. Laundry: main or main+other 5, other 0.
+    { k: 'layout', label: 'Layout (levels)', opts: { good: '1, 2 or 3-story', split: 'Tri-level / split', bilevel: 'Bi-level', unknown: 'Unknown' }, score: { good: 1, split: 3 / 5, bilevel: 0, unknown: 0 } },
+    { k: 'primary', label: 'Primary bedroom', opts: { main: 'Main floor', other: 'Other floor', unknown: 'Unknown' }, score: { main: 1, other: 0, unknown: 0 } },
+    { k: 'laundry', label: 'Laundry', opts: { main: 'Main floor', both: 'Main + other floor', other: 'Other floor', unknown: 'Unknown' }, score: { main: 1, both: 1, other: 0, unknown: 0 } },
     { k: 'size', label: 'Finished size' },
     { k: 'psf', label: '$/sqft value' },
     { k: 'tax', label: 'Taxes' },
-    { k: 'ac', label: 'A/C', opts: { yes: 'Central', partial: 'Partial / evap', no: 'None' }, score: { yes: 1, partial: 0.5, no: 0 } },
+    { k: 'ac', label: 'A/C', opts: { yes: 'Central', partial: 'Partial / evap', no: 'None', unknown: 'Unknown' }, score: { yes: 1, partial: 0.5, no: 0, unknown: 0 } },
     // Jeremy's levels: rental 8, multigen 5, no 0 — scaled so a rental earns the item's full weight.
-    { k: 'multigen', label: 'Multigen / rental unit', opts: { rental: 'Rental / ADU', multigen: 'Multigen', unknown: 'Unknown', no: 'No' }, score: { rental: 1, multigen: 5 / 8, unknown: 0.2, no: 0 } },
+    { k: 'multigen', label: 'Multigen / rental unit', opts: { rental: 'Rental / ADU', multigen: 'Multigen', unknown: 'Unknown', no: 'No' }, score: { rental: 1, multigen: 5 / 8, unknown: 0, no: 0 } },
     // Pool only (Jeremy, Oct 31 2026): a hot tub earns nothing here; it still shows as a highlight chip.
     { k: 'pool', label: 'Pool', opts: { pool: 'Pool', none: 'No pool' }, score: { pool: 1, none: 0, hottub: 0 } },
     { k: 'outdoor', label: 'Outdoor entertaining', opts: { great: 'Great', some: 'Some', none: 'Little' }, score: { great: 1, some: 0.5, none: 0 } },
@@ -253,11 +256,15 @@
     put('rv', rvRows.length ? 'likely' : 'unknown', rvRows.length ? 'Listing: ' + rvRows.map((p) => p.desc || `${p.spaces} RV space`).join('; ') : (h.rv ? 'Description: ' + h.rv : 'No RV parking in the listing'));
     put('kitchen', h.openKitchen ? 'likely' : 'unknown', h.openKitchen ? 'Description: ' + h.openKitchen : 'Check the photos');
     const lv = l.levels || l.detail?.fields?.Levels || '';
-    put('layout', /bi-?level/i.test(lv) ? 'bilevel' : /split|tri|multi|quad/i.test(lv) ? 'split' : 'good', lv ? `Listing: ${lv}` : 'Levels not listed');
+    put('layout', !lv ? 'unknown' : /bi-?level/i.test(lv) ? 'bilevel' : /split|tri|multi|quad/i.test(lv) ? 'split' : /^(one|two|three)/i.test(lv) ? 'good' : 'unknown', lv ? `Listing: ${lv}` : 'Levels not listed');
     const pl = h.primaryLevel || '';
     put('primary', /^main/i.test(pl) || /^one$/i.test(lv) ? 'main' : pl ? 'other' : 'unknown',
       pl ? `Primary bedroom: ${pl}` : /^one$/i.test(lv) ? 'One-level home' : 'Not in the room list');
-    put('ac', /central/i.test(cooling) ? 'yes' : /evap|swamp|window|ductless|mini/i.test(cooling) ? 'partial' : cooling && !/none/i.test(cooling) ? 'partial' : 'no', cooling ? 'Cooling: ' + cooling : 'No cooling listed');
+    put('ac', !cooling ? 'unknown' : /central/i.test(cooling) ? 'yes' : /none/i.test(cooling) ? 'no' : 'partial', cooling ? 'Cooling: ' + cooling : 'Cooling not listed');
+    const ll = h.laundryLevels || [];
+    const onMain = ll.some((x) => /^main/i.test(x)), offMain = ll.some((x) => !/^main/i.test(x));
+    put('laundry', onMain && offMain ? 'both' : onMain ? 'main' : offMain ? 'other' : 'unknown',
+      ll.length ? `Laundry: ${ll.join(', ')}` : 'Not in the room list or description');
     put('multigen', h.rental ? 'rental' : h.multigen ? 'multigen' : 'unknown',
       h.rental ? 'Description: ' + h.rental : h.multigen ? 'Description: ' + h.multigen : 'Nothing in the description');
     const pool = h.pool || [];
@@ -482,7 +489,8 @@
           ${Object.entries(it.opts).map(([v, t]) => `<option value="${v}" ${r.manual && r.v === v ? 'selected' : ''}>${esc(t)}</option>`).join('')}
         </select>` : `<span class="small">${esc(r.label)}</span>`;
       const evid = [r.manual ? `Set by ${r.by || '?'}${r.why ? ': ' + r.why : ''}` : '', r.ev].filter(Boolean).join(' · ');
-      return `<span class="lbl">${esc(it.label)}</span>${sel}<span class="pts">${r.pts.toFixed(1)}/${r.w}</span>${evid ? `<span class="ev">${esc(evid)}</span>` : ''}`;
+      const unk = r.v === 'unknown' ? ' unk' : '';
+      return `<span class="lbl${unk}">${unk ? '⚠ ' : ''}${esc(it.label)}</span>${sel.replace('<select ', `<select class="${unk.trim()}" `)}<span class="pts${unk}">${r.pts.toFixed(1)}/${r.w}</span>${evid ? `<span class="ev">${esc(evid)}</span>` : ''}`;
     }).join('');
   }
 
@@ -532,7 +540,7 @@
         <div class="facts">${l.beds ?? '?'} bd · ${l.baths ?? '?'} ba · ${(() => { const si = sqftInfo(l), fin = si.fin, tot = l.sqftTotal; return fin ? `${Math.round(fin).toLocaleString()} sq ft finished${si.fixed ? ` <span class="fixnote" title="${esc(si.how)}">(listing said ${si.listed ? si.listed.toLocaleString() : '?'}; ${esc(si.how.startsWith('corrected') ? si.how : 'fixed')})</span>` : tot && tot > fin ? ` (${(tot - fin).toLocaleString()} more unfinished)` : ''}` : ''; })()} · Taxes ${money(taxOf(l))}${l.detail?.fields?.Cooling ? ' · ' + esc(l.detail.fields.Cooling) : ''}</div>
         <div class="chips"><span class="chip ${rvCls}">RV: ${esc(rv.label)}</span>${highlights(l)}</div>
         ${rv.why || rv.ev ? `<div class="facts">${esc(rv.why ? rv.why : rv.ev)}</div>` : ''}
-        <details ${S.openRatings.has(l.id) ? 'open' : ''} data-rating="${esc(l.id)}"><summary>Rating breakdown</summary><div class="rate">${rateRows(l, ev, canEdit)}</div>
+        <details ${S.openRatings.has(l.id) ? 'open' : ''} data-rating="${esc(l.id)}"><summary>Rating breakdown${(() => { const n = ITEMS.filter((it) => ev.items[it.k]?.v === 'unknown').length; return n ? ` <span class="unk-chip">⚠ ${n} unknown</span>` : ''; })()}</summary><div class="rate">${rateRows(l, ev, canEdit)}</div>
           <form class="conc sqftfix" data-sqft="${esc(l.id)}"><label>Finished sq ft correction<input inputmode="numeric" value="${S.shared?.sqft?.[l.id]?.fin ?? ''}" placeholder="${sqftInfo(l).fin ?? ''}" ${canEdit ? '' : 'disabled'}></label><button class="btn" ${canEdit ? '' : 'disabled'}>Save</button></form>
           ${howScoring()}</details>
         <div class="notes">

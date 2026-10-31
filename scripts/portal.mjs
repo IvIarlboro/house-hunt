@@ -206,6 +206,24 @@ export function parseDetail(html) {
     const m = remarks.match(/(main[- ](?:floor|level)) (?:primary|master)|(?:primary|master) (?:suite |bedroom )?(?:is )?on the main/i);
     if (m) primaryLevel = 'Main (description)';
   }
+  // Laundry: every "Laundry" row in the room table and its level (a level line follows within a few lines),
+  // then the Laundry Features field and the description as fallbacks.
+  const LEVEL = /^(Main|Upper|Lower|Basement|Second|Third)$/i;
+  const laundryLevels = [];
+  if (ri >= 0) {
+    for (let j = ri; j < Math.min(L.length, ri + 400) && L[j] !== 'School Information'; j++) {
+      if (/^Laundry( Room)?$/i.test(L[j])) {
+        const lv = L.slice(j + 1, j + 4).find((x) => LEVEL.test(x));
+        if (lv && !laundryLevels.includes(lv)) laundryLevels.push(lv);
+      }
+    }
+  }
+  if (!laundryLevels.length) {
+    const lf = `${v['Laundry Features'] || ''} ${remarks}`;
+    if (/main[- ](?:floor|level) laundry|laundry (?:room )?(?:is )?on the main|main level/i.test(lf)) laundryLevels.push('Main (listing)');
+    else if (/upper[- ]level laundry|laundry (?:room )?(?:is )?upstairs|second[- ]floor laundry/i.test(lf)) laundryLevels.push('Upper (listing)');
+    else if (/basement laundry|laundry (?:room )?in (?:the )?basement|lower[- ]level laundry|in basement/i.test(lf)) laundryLevels.push('Basement (listing)');
+  }
   const imgs = [...new Set([...html.matchAll(/https:\/\/matrixmedia\.recolorado\.com\/mediaserver\/GetMedia\.ashx\?[^"' ]+/g)].map((m) => ent(m[0])))];
   // Prefer the medium photo (Size=3); Size=4 is 1600px and too heavy for a phone list.
   const first = imgs.filter((u) => /Number=0&/.test(u));
@@ -253,6 +271,7 @@ export function parseDetail(html) {
       if (/^yes$/i.test(v['Pool Private YN'] || '')) pool.unshift('private pool (listing field)');
       return {
         primaryLevel,
+        laundryLevels,
         openKitchen: sentenceWith(remarks, OPEN_KITCHEN),
         multigen: sentenceWith(remarks, MULTIGEN),
         rental: sentenceWith(remarks, RENTAL),
