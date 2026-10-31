@@ -130,12 +130,12 @@ async function main() {
     .filter((l) => l.bucket !== 'dislike')
     .map(({ detailAt, index, ...rest }) => rest)
     .sort((a, b) => a.id.localeCompare(b.id));
-  const body = { listings: pubListings, unavailable: [...unavailable].sort() };
+  const body = { portalUrl: PORTAL_URL, listings: pubListings, unavailable: [...unavailable].sort() };
   const hash = createHash('sha256').update(JSON.stringify(body)).digest('hex');
 
   const changed = hash !== state.hash || !existsSync(encPath);
   if (changed) {
-    const payload = { v: 1, updatedAt: nowIso, source: 'REcolorado client portal', portalUrl: PORTAL_URL, ...body };
+    const payload = { v: 1, updatedAt: nowIso, source: 'REcolorado client portal', ...body };
     writeJson(encPath, await encryptJson(key, payload));
   }
   state = { hash, lastCheck: nowIso, listings: next };
