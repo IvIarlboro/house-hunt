@@ -122,7 +122,9 @@ function cues(text, re) {
   return [...out];
 }
 const OPEN_KITCHEN = /\bopen[- ](?:concept|floor[- ]?plan|kitchen|layout|living)|kitchen (?:that )?opens|opens? (?:up )?(?:in)?to the (?:living|family|great)|great room/i;
-const MULTIGEN = /multi[- ]?gen|mother[- ]?in[- ]?law|in[- ]?law|\bADU\b|accessory dwelling|separate (?:entrance|living|apartment)|second kitchen|kitchenette|wet bar\/kitchen|basement kitchen|guest suite|rental income|lock[- ]?off|\bapartment\b/i;
+// Rentable unit (worth more to Jeremy) vs. multigenerational space (family living, not rentable as-is).
+const RENTAL = /rental (?:income|revenue|history|potential)|income (?:property|potential|opportunit)|\bADU\b|accessory dwelling|separate (?:entrance|apartment|unit)|private entrance|lock[- ]?off|(?:basement|garden[- ]level|in[- ]law|mother[- ]in[- ]law) apartment|double apartments|\bapartments?\b|(?:mid|short|long)[- ]term rental|airbnb|\bduplex\b|second (?:unit|dwelling)|carriage house|guest house|casita/i;
+const MULTIGEN = /multi[- ]?gen|mother[- ]?in[- ]?law|in[- ]?law (?:suite|quarters)|second (?:kitchen|primary|master)|dual (?:primary|master)|kitchenette|wet bar\/kitchen|basement kitchen|guest suite|separate living (?:quarters|area|space)/i;
 const RV = /\bRV\b|camper|\bboat\b|trailer|toy hauler/i;
 
 function sentenceWith(text, re) {
@@ -228,6 +230,7 @@ export function parseDetail(html) {
         primaryLevel,
         openKitchen: sentenceWith(remarks, OPEN_KITCHEN),
         multigen: sentenceWith(remarks, MULTIGEN),
+        rental: sentenceWith(remarks, RENTAL),
         rv: sentenceWith(remarks, RV),
         pool: [...new Set(pool)],
         outdoor: cues(all, CUES.outdoor),

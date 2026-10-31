@@ -32,7 +32,8 @@
     { k: 'psf', label: '$/sqft value' },
     { k: 'tax', label: 'Taxes' },
     { k: 'ac', label: 'A/C', opts: { yes: 'Central', partial: 'Partial / evap', no: 'None' }, score: { yes: 1, partial: 0.5, no: 0 } },
-    { k: 'multigen', label: 'Multigen / rental unit', opts: { yes: 'Yes', maybe: 'Maybe', unknown: 'Unknown', no: 'No' }, score: { yes: 1, maybe: 0.5, unknown: 0.25, no: 0 } },
+    // Jeremy's levels: rental 8, multigen 5, no 0 — scaled so a rental earns the item's full weight.
+    { k: 'multigen', label: 'Multigen / rental unit', opts: { rental: 'Rental / ADU', multigen: 'Multigen', unknown: 'Unknown', no: 'No' }, score: { rental: 1, multigen: 5 / 8, unknown: 0.2, no: 0 } },
     { k: 'pool', label: 'Pool / hot tub', opts: { pool: 'In-ground pool', hottub: 'Hot tub', none: 'None' }, score: { pool: 1, hottub: 0.4, none: 0 } },
     { k: 'outdoor', label: 'Outdoor entertaining', opts: { great: 'Great', some: 'Some', none: 'Little' }, score: { great: 1, some: 0.5, none: 0 } },
     { k: 'upgrades', label: 'Recent upgrades', opts: { major: 'Major', some: 'Some', none: 'None' }, score: { major: 1, some: 0.5, none: 0 } },
@@ -212,7 +213,8 @@
     const put = (k, autoV, ev) => {
       const it = ITEMS.find((i) => i.k === k);
       const m = man[k];
-      const v = m?.v || autoV;
+      let v = m?.v || autoV;
+      if (k === 'multigen') v = { yes: 'multigen', maybe: 'multigen' }[v] || v; // older picks before rental/multigen split
       out[k] = { v, manual: !!m, by: m?.by, why: m?.why, ev, s: it.score[v] ?? 0, label: it.opts[v] || v };
     };
     put('rv', rvRows.length ? 'likely' : 'unknown', rvRows.length ? 'Listing: ' + rvRows.map((p) => p.desc || `${p.spaces} RV space`).join('; ') : (h.rv ? 'Description: ' + h.rv : 'No RV parking in the listing'));
@@ -223,7 +225,8 @@
     put('primary', /^main/i.test(pl) || /^one$/i.test(lv) ? 'main' : pl ? 'other' : 'unknown',
       pl ? `Primary bedroom: ${pl}` : /^one$/i.test(lv) ? 'One-level home' : 'Not in the room list');
     put('ac', /central/i.test(cooling) ? 'yes' : /evap|swamp|window|ductless|mini/i.test(cooling) ? 'partial' : cooling && !/none/i.test(cooling) ? 'partial' : 'no', cooling ? 'Cooling: ' + cooling : 'No cooling listed');
-    put('multigen', h.multigen ? 'maybe' : 'unknown', h.multigen ? 'Description: ' + h.multigen : '');
+    put('multigen', h.rental ? 'rental' : h.multigen ? 'multigen' : 'unknown',
+      h.rental ? 'Description: ' + h.rental : h.multigen ? 'Description: ' + h.multigen : 'Nothing in the description');
     const pool = h.pool || [];
     put('pool', pool.some((p) => /pool/.test(p)) ? 'pool' : pool.length ? 'hottub' : 'none', pool.join(', '));
     const od = h.outdoor || [];
