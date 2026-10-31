@@ -263,6 +263,8 @@
 
   // ---------- market check (from the houses on your own list) ----------
   const median = (a) => { const v = a.filter((x) => x != null && Number.isFinite(x)).sort((x, y) => x - y); if (!v.length) return null; const m = v.length >> 1; return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2; };
+  // Price per TOTAL sqft: fairer across houses with unfinished basements than finished-only.
+  const psfTotalOf = (l) => (l.price && l.sqftTotal ? l.price / l.sqftTotal : null);
   function origOf(l) { const f = l.detail?.fields || {}; return l.originalPrice || num$(f['Original List Price:']) || num$(f['Original List Price']) || null; }
   function listedOf(l) { const f = l.detail?.fields || {}; return usDate(f['Listing Contract Date:']) || usDate(l.listDate); }
   function cutOf(l) {
@@ -290,7 +292,7 @@
       sold: sold.length, pend: pend.length, act: act.length, ratio, dtc, lean,
       withConc: sold.filter(({ s }) => s.conc?.amount != null).length,
       dToClose: median(sold.map(({ s }) => s.dom)),
-      soldPsf: median(sold.map(({ l }) => psfOf(l))),
+      soldPsf: median(sold.map(({ l }) => psfTotalOf(l))),
       cuts: act.filter((l) => cutOf(l).pct > 0).length,
       enough: sold.length + pend.length >= 6,
     };
@@ -302,20 +304,21 @@
     const t = new Date(); t.setHours(0, 0, 0, 0);
     const dom = listed ? Math.max(0, Math.round((t - listed) / 864e5)) : null;
     const why = []; let pts = 0;
+    const dd = (n) => `${n} day${n === 1 ? '' : 's'}`;
     if (dom != null && mk.dtc) {
       const med = Math.round(mk.dtc);
-      if (dom > 2 * mk.dtc) { pts += 2; why.push(`${dom} days on market, over twice the ${med}-day median`); }
-      else if (dom > mk.dtc) { pts += 1; why.push(`${dom} days on market vs a ${med}-day median`); }
-      else why.push(`${dom} days on market, still fresh (median ${med})`);
+      if (dom > 3 * mk.dtc) { pts += 2; why.push(`${dd(dom)} on market, about ${Math.round(dom / mk.dtc)}× the ${med}-day median`); }
+      else if (dom > 1.5 * mk.dtc) { pts += 1; why.push(`${dd(dom)} on market vs a ${med}-day median`); }
+      else why.push(`${dd(dom)} on market, still fresh (median ${med})`);
     }
     const cut = cutOf(l);
     if (cut.pct >= 0.05) { pts += 2; why.push(`cut ${(cut.pct * 100).toFixed(1)}% from ${money(cut.from)}`); }
-    else if (cut.pct > 0) { pts += 1; why.push(`cut ${(cut.pct * 100).toFixed(1)}% from ${money(cut.from)}`); }
-    const psf = psfOf(l);
+    else if (cut.pct >= 0.01) { pts += 1; why.push(`cut ${(cut.pct * 100).toFixed(1)}% from ${money(cut.from)}`); }
+    const psf = psfTotalOf(l);
     if (psf && mk.soldPsf) {
       const d = psf / mk.soldPsf - 1;
-      if (d > 0.1) { pts += 1; why.push(`$/sqft ${Math.round(d * 100)}% above recent sales`); }
-      else if (d < -0.1) { pts -= 1; why.push(`$/sqft ${Math.round(-d * 100)}% below recent sales`); }
+      if (d > 0.15) { pts += 1; why.push(`$/total sqft ${Math.round(d * 100)}% above recent sales`); }
+      else if (d < -0.15) { pts -= 1; why.push(`$/total sqft ${Math.round(-d * 100)}% below recent sales`); }
     }
     return { level: pts >= 3 ? 'High' : pts >= 2 ? 'Medium' : 'Low', pts, why };
   }
@@ -329,7 +332,7 @@
         ${tile('Days to contract (median)', mk.dtc == null ? '—' : String(Math.round(mk.dtc)), `${mk.pend} pending`)}
         ${tile('Listing to close (median)', mk.dToClose == null ? '—' : `${Math.round(mk.dToClose)} days`, `${mk.sold} sold`)}
         ${tile('Active with price cuts', `${mk.cuts} of ${mk.act}`, '')}
-        ${tile('Sold $/sqft (median)', mk.soldPsf ? `$${Math.round(mk.soldPsf)}` : '—', 'finished sqft')}
+        ${tile('Sold $/sqft (median)', mk.soldPsf ? `$${Math.round(mk.soldPsf)}` : '—', 'per total sqft')}
       </div>
       <p class="muted small">Only the houses Brooke sent you, not the whole MLS${mk.enough ? '' : ', so treat it as a rough read'}. Concessions entered on sold houses make "sold vs list" truer. "Leans to sellers" means the median sale was at list or above and contracts came within 3 weeks; "Leans to buyers" means 2.5%+ under list or 45+ days to contract.</p>
     </details>`;
