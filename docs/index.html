@@ -7,7 +7,7 @@
 <meta name="referrer" content="no-referrer">
 <title>House Hunt</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M4 15 16 5l12 10v12H19v-8h-6v8H4z' fill='%232f6f5e'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="style.css?v=7">
+<link rel="stylesheet" href="style.css?v=10">
 </head>
 <body>
 <div id="app">
@@ -61,9 +61,24 @@
 
     <p id="banner" class="banner" hidden></p>
     <div id="market"></div>
+    <p id="lowNote" class="low-note" hidden></p>
     <div id="cards" class="cards"></div>
     <p id="empty" class="muted center" hidden>No houses match.</p>
   </section>
+
+  <dialog id="galDlg" class="gal">
+    <div class="gal-head">
+      <span id="galTitle" class="small"></span>
+      <span id="galCount" class="muted small"></span>
+      <button id="galClose" class="btn" type="button">Close</button>
+    </div>
+    <div class="gal-stage">
+      <button id="galPrev" class="gal-nav" type="button" aria-label="Previous photo">‹</button>
+      <img id="galImg" alt="" referrerpolicy="no-referrer">
+      <button id="galNext" class="gal-nav" type="button" aria-label="Next photo">›</button>
+    </div>
+    <div id="galLinks" class="links"></div>
+  </dialog>
 
   <dialog id="whoDlg" class="dlg">
     <form method="dialog" id="whoForm">
@@ -107,6 +122,6 @@
     <p id="setMsg" class="msg" role="status"></p>
   </dialog>
 </div>
-<script src="app.js?v=9"></script>
+<script src="app.js?v=10"></script>
 </body>
 </html>

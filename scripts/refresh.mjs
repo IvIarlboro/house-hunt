@@ -35,6 +35,7 @@ const log = (msg) => {
 const readJson = (p, d = null) => (existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : d);
 const writeJson = (p, o) => writeFileSync(p, JSON.stringify(o, null, 1) + '\n');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const J = (x) => JSON.stringify(x);
 
 // Portal shows recent note dates as "yesterday" or a weekday; pin them to real dates.
 function absDate(label, now = new Date()) {
@@ -117,10 +118,19 @@ async function main() {
       l.detail = {
         fields: d.fields, parking: d.parking, photoCount: d.photoCount, hints: d.hints,
       };
-      // The portal mints a new link (exk=) for the same photo each session; keep the old link
-      // unless it is a different photo, so quiet runs don't look like changes. Old links keep working.
-      const samePhoto = (a, b) => a && b && a.replace(/&exk=[^&]*/, '') === b.replace(/&exk=[^&]*/, '');
-      l.photo = samePhoto(l.photo, d.photo) ? l.photo : (d.photo || l.photo || l.photoThumb);
+      // The portal mints a new link (exk=) for the same photo each session; keep the old links
+      // unless the photos changed, so quiet runs don't look like changes. Links are renewed weekly
+      // in case old ones expire.
+      const bare = (u) => (u || '').replace(/&exk=[^&]*/, '');
+      const fresh = l.photosAt && Date.now() - Date.parse(l.photosAt) < 7 * 864e5;
+      const samePhotos = fresh && l.photos && J(l.photos.map(bare)) === J((d.photos || []).map(bare)) && bare(l.photo) === bare(d.photo);
+      if (!samePhotos) {
+        l.photo = d.photo || l.photo || l.photoThumb;
+        l.photos = d.photos || [];
+        l.photosAt = nowIso;
+      }
+      l.tours = d.tours || [];
+      if (d.geo) l.geo = d.geo;
       l.portalNotes = d.notes.map((n) => ({ date: absDate(n.when, now), text: n.text, by: n.by }));
       l.detailAt = nowIso;
       await sleep(400);
@@ -131,11 +141,10 @@ async function main() {
   // Published payload: drop volatile fields so a quiet run doesn't create a commit.
   const pubListings = Object.values(next)
     .filter((l) => l.bucket !== 'dislike')
-    .map(({ detailAt, index, ...rest }) => rest)
+    .map(({ detailAt, index, photosAt, ...rest }) => rest)
     .sort((a, b) => a.id.localeCompare(b.id));
   // Which fields changed per listing (for the log), so churn is easy to spot.
-  const strip = ({ detailAt, index, needsDetail, ...r }) => r;
-  const J = (x) => JSON.stringify(x);
+  const strip = ({ detailAt, index, needsDetail, photosAt, ...r }) => r;
   const diffs = [];
   for (const l of pubListings) {
     const p = state.listings[l.id]; if (!p) continue;

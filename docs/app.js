@@ -50,7 +50,7 @@
     meta: null, key: null, token: null, repo: null,
     data: null, shared: null, sharedSha: null,
     user: LS.get('hh-user'), tab: LS.get('hh-tab', 'fav'), sort: LS.get('hh-sort', 'score'),
-    showOff: LS.get('hh-hideOff') !== '1', q: '', prevVisit: LS.get('hh-lastVisit'), openRatings: new Set(),
+    showOff: LS.get('hh-hideOff') !== '1', showLow: LS.get('hh-showLow') === '1', q: '', prevVisit: LS.get('hh-lastVisit'), openRatings: new Set(),
   };
   const defaultShared = () => ({ v: 1, users: [], weights: { ...DEFAULT_WEIGHTS }, ratings: {}, notes: [] });
   // Owner check: the owner's name and the rating weights are guarded by an owner PIN.
@@ -258,7 +258,7 @@
     }
     const by = s.conc ? ` <span class="muted small">Concessions entered by ${esc(s.conc.by)}.</span>` : '';
     return `<div class="sale ${s.kind}">${main}${by}
-      <form class="conc" data-conc="${esc(l.id)}"><label>Concessions $<input inputmode="numeric" value="${c ?? ''}" placeholder="from Brooke" ${canEdit ? '' : 'disabled'}></label><button class="btn" ${canEdit ? '' : 'disabled'}>Save</button></form></div>`;
+      <form class="conc" data-conc="${esc(l.id)}"><label>Concessions $<input inputmode="numeric" value="${c ?? ''}" placeholder="amount" ${canEdit ? '' : 'disabled'}></label><button class="btn" ${canEdit ? '' : 'disabled'}>Save</button></form></div>`;
   }
 
   // ---------- market check (from the houses on your own list) ----------
@@ -388,8 +388,8 @@
     const ev = evaluate(l, rg);
     const canEdit = !!S.token && !!S.user;
     const addr = `${l.address}, ${l.city || ''}`;
-    const waze = `https://waze.com/ul?q=${encodeURIComponent(addr)}&navigate=yes`;
-    const gmap = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addr)}`;
+    const { waze, gmap } = mapLinks(l);
+    const nPhotos = l.photos?.length || l.detail?.photoCount || 0;
     const bucket = { fav: ['Favorite', 'fav'], poss: ['Possibility', ''], none: ['New from agent', 'new'] }[l.bucket] || ['', ''];
     const drop = priceDrop(l);
     const off = !ACTIVE.test(l.status || '') || l.offPortal;
@@ -397,9 +397,9 @@
     const rvCls = { fits: 'good', likely: 'warn', tight: 'warn', no: 'bad' }[rv.v] || '';
     const sharedNotes = (S.shared?.notes || []).filter((n) => n.lid === l.id).sort((a, b) => a.at.localeCompare(b.at));
     const portalNotes = l.portalNotes || [];
-    return `<article class="card ${off ? 'dim' : ''}" data-id="${esc(l.id)}">
+    return `<article class="card ${off ? 'dim' : ''} ${ev.total < LOW_SCORE ? 'low' : ''}" data-id="${esc(l.id)}">
       <div class="photo">
-        ${l.photo || l.photoThumb ? `<img loading="lazy" referrerpolicy="no-referrer" src="${esc(l.photo || l.photoThumb)}" data-thumb="${esc(l.photoThumb || '')}" alt="">` : ''}
+        ${l.photo || l.photoThumb ? `<button class="ph-open" type="button" data-gal="${esc(l.id)}" aria-label="See all ${nPhotos} photos"><img loading="lazy" referrerpolicy="no-referrer" src="${esc(l.photo || l.photoThumb)}" data-thumb="${esc(l.photoThumb || '')}" alt="">${nPhotos > 1 ? `<span class="ph-count">${nPhotos} photos</span>` : ''}</button>` : ''}
         <div class="badges">
           ${bucket[0] ? `<span class="badge ${bucket[1]}">${bucket[0]}</span>` : ''}
           ${isNew(l) ? '<span class="badge new">New since your last visit</span>' : ''}
@@ -425,18 +425,54 @@
             <button class="btn" ${canEdit ? '' : 'disabled'}>Add</button>
           </form>
         </div>
-        <div class="links"><a href="${waze}" target="_blank" rel="noopener">Waze</a><a href="${gmap}" target="_blank" rel="noopener">Google Maps</a>${S.data.portalUrl ? `<a href="${esc(S.data.portalUrl)}" target="_blank" rel="noopener">Portal</a>` : ''}<span class="muted">#${esc(l.id)}${l.detail?.photoCount ? ' · ' + l.detail.photoCount + ' photos' : ''}</span></div>
+        ${(l.tours || []).length ? `<div class="links tours">${tourLinks(l)}</div>` : ''}
+        <div class="links">${nPhotos ? `<button class="btn link" type="button" data-gal="${esc(l.id)}">Photos (${nPhotos})</button>` : ''}<a href="${waze}" target="_blank" rel="noopener">Waze</a><a href="${gmap}" target="_blank" rel="noopener">Google Maps</a>${satLink(l)}${S.data.portalUrl ? `<a href="${esc(S.data.portalUrl)}" target="_blank" rel="noopener">Portal</a>` : ''}<span class="muted">#${esc(l.id)}</span></div>
       </div>
     </article>`;
   }
 
+  // ---------- maps, tours, photos ----------
+  function mapLinks(l) {
+    const addr = `${l.address}, ${l.city || ''}`;
+    const g = l.geo;
+    return {
+      waze: g ? `https://waze.com/ul?ll=${g.lat},${g.lng}&navigate=yes` : `https://waze.com/ul?q=${encodeURIComponent(addr)}&navigate=yes`,
+      gmap: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addr)}`,
+    };
+  }
+  const satLink = (l) => (l.geo ? `<a href="https://www.google.com/maps/@${l.geo.lat},${l.geo.lng},70m/data=!3m1!1e3" target="_blank" rel="noopener" title="Satellite view, handy for checking RV access">Satellite</a>` : '');
+  const tourLinks = (l) => (l.tours || []).map((t) => `<a href="${esc(t.url)}" target="_blank" rel="noopener">${esc(t.kind)}</a>`).join('');
+  function openGallery(id) {
+    const l = (S.data.listings || []).find((x) => x.id === id); if (!l) return;
+    const ph = (l.photos?.length ? l.photos : [l.photo || l.photoThumb]).filter(Boolean);
+    S.gal = { l, ph, i: 0 };
+    drawGal(); $('#galDlg').showModal();
+  }
+  function drawGal(step = 0) {
+    const g = S.gal; if (!g) return;
+    g.i = (g.i + step + g.ph.length) % g.ph.length;
+    $('#galImg').src = g.ph[g.i];
+    $('#galCount').textContent = `${g.i + 1} / ${g.ph.length}`;
+    $('#galTitle').textContent = `${g.l.address}, ${g.l.city || ''}`;
+    $('#galLinks').innerHTML = tourLinks(g.l) + satLink(g.l);
+    const nx = new Image(); nx.referrerPolicy = 'no-referrer'; nx.src = g.ph[(g.i + 1) % g.ph.length]; // preload next
+  }
+
+  const LOW_SCORE = 50;
   function render() {
     if (!S.data) return;
     const all = (S.data.listings || []).filter((l) => l.bucket !== 'dislike');
     const rg = ranges(all.filter((l) => !l.offPortal));
     S.mk = market(all);
     $('#market').innerHTML = marketPanel(S.mk);
-    const base = all.filter(showable).filter(matches);
+    const scored = all.filter(showable).filter(matches).map((l) => ({ l, total: evaluate(l, rg).total }));
+    const lowHere = scored.filter((x) => x.total < LOW_SCORE && inTab(x.l)).length;
+    const base = scored.filter((x) => S.showLow || x.total >= LOW_SCORE).map((x) => x.l);
+    const lowNote = $('#lowNote');
+    lowNote.hidden = !lowHere;
+    lowNote.innerHTML = S.showLow
+      ? `Showing ${lowHere} house${lowHere === 1 ? '' : 's'} rated under ${LOW_SCORE} (faded). <button class="btn link" type="button" id="lowToggle">Hide them</button>`
+      : `${lowHere} house${lowHere === 1 ? '' : 's'} rated under ${LOW_SCORE} hidden. <button class="btn link" type="button" id="lowToggle">Show them</button>`;
     for (const t of $$('.tab')) {
       const tab = t.dataset.tab;
       t.setAttribute('aria-selected', String(tab === S.tab));
@@ -510,6 +546,16 @@
     let st; $('#search').addEventListener('input', (e) => { clearTimeout(st); st = setTimeout(() => { S.q = e.target.value.trim(); render(); }, 150); });
     $('#showOff').addEventListener('change', (e) => { S.showOff = e.target.checked; LS.set('hh-hideOff', S.showOff ? '0' : '1'); render(); });
     $('#sort').addEventListener('change', (e) => { S.sort = e.target.value; LS.set('hh-sort', S.sort); render(); });
+    $('#lowNote').addEventListener('click', (e) => { if (e.target.id !== 'lowToggle') return; S.showLow = !S.showLow; LS.set('hh-showLow', S.showLow ? '1' : '0'); render(); });
+    $('#cards').addEventListener('click', (e) => { const b = e.target.closest('[data-gal]'); if (b) openGallery(b.dataset.gal); });
+    $('#galPrev').addEventListener('click', () => drawGal(-1));
+    $('#galNext').addEventListener('click', () => drawGal(1));
+    $('#galClose').addEventListener('click', () => $('#galDlg').close());
+    $('#galDlg').addEventListener('keydown', (e) => { if (e.key === 'ArrowLeft') drawGal(-1); if (e.key === 'ArrowRight') drawGal(1); });
+    let tx = null;
+    $('#galDlg').addEventListener('touchstart', (e) => { tx = e.touches[0].clientX; }, { passive: true });
+    $('#galDlg').addEventListener('touchend', (e) => { if (tx == null) return; const dx = e.changedTouches[0].clientX - tx; tx = null; if (Math.abs(dx) > 40) drawGal(dx < 0 ? 1 : -1); });
+    $('#galImg').addEventListener('click', (e) => { const r = e.target.getBoundingClientRect(); drawGal(e.clientX - r.left < r.width / 3 ? -1 : 1); });
     $('#market').addEventListener('toggle', (e) => { if (e.target.matches?.('details.market')) LS.set('hh-mkt', e.target.open ? '1' : '0'); }, true);
     $('#clearFilters').addEventListener('click', () => { S.q = ''; S.showOff = true; LS.set('hh-hideOff', '0'); render(); });
     $('#cards').addEventListener('submit', async (e) => {

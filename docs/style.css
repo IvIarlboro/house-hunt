@@ -100,6 +100,23 @@ details[open] > summary::before { content: "▾ "; }
 .room { font-size: 13px; border-radius: 8px; padding: 6px 10px; background: var(--surface-2); border-left: 3px solid var(--muted); }
 .room-high { border-left-color: var(--good); background: color-mix(in srgb, var(--good) 10%, var(--surface)); }
 .room-medium { border-left-color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, var(--surface)); }
+.card.low { opacity: .6; }
+.low-note { margin: 12px 0 0; font-size: 14px; color: var(--muted); }
+.ph-open { all: unset; display: block; width: 100%; height: 100%; cursor: zoom-in; position: relative; }
+.ph-open img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ph-count { position: absolute; right: 8px; bottom: 8px; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: rgb(0 0 0 / .62); color: #fff; }
+.links.tours a { font-weight: 600; }
+.gal { width: min(1100px, calc(100vw - 16px)); max-height: calc(100vh - 16px); padding: 10px; border: 0; border-radius: var(--radius); background: #111; color: #eee; }
+.gal::backdrop { background: rgb(0 0 0 / .8); }
+.gal-head { display: flex; gap: 12px; align-items: center; margin-bottom: 8px; }
+.gal-head #galTitle { flex: 1; color: #eee; }
+.gal-head .muted { color: #aaa; }
+.gal-stage { position: relative; display: grid; place-items: center; height: min(72vh, 760px); }
+.gal-stage img { max-width: 100%; max-height: 100%; object-fit: contain; user-select: none; }
+.gal-nav { position: absolute; top: 50%; transform: translateY(-50%); width: 44px; height: 64px; border: 0; border-radius: 8px; background: rgb(255 255 255 / .14); color: #fff; font-size: 34px; cursor: pointer; }
+.gal-nav:hover { background: rgb(255 255 255 / .28); }
+#galPrev { left: 4px; } #galNext { right: 4px; }
+.gal .links { margin-top: 8px; } .gal .links a { color: #9fd3c3; }
 .links { display: flex; gap: 12px; font-size: 13px; flex-wrap: wrap; }
 
 .dlg { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--text); padding: 18px; width: min(420px, calc(100vw - 32px)); }

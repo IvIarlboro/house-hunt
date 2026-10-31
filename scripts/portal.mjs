@@ -185,11 +185,38 @@ export function parseDetail(html) {
   // Prefer the medium photo (Size=3); Size=4 is 1600px and too heavy for a phone list.
   const first = imgs.filter((u) => /Number=0&/.test(u));
   const firstBig = first.find((u) => /Size=3&/.test(u)) || first.sort((a, b) => num(b.match(/Size=(\d)/)?.[1]) - num(a.match(/Size=(\d)/)?.[1]))[0];
+  // Every photo, one medium-size link per photo number, in listing order.
+  const byNum = new Map();
+  for (const u of imgs) {
+    const n = +(u.match(/Number=(\d+)/)?.[1] ?? -1); const sz = +(u.match(/Size=(\d)/)?.[1] ?? 0);
+    if (n < 0) continue;
+    const cur = byNum.get(n);
+    if (!cur || (sz === 3 && cur.sz !== 3) || (cur.sz !== 3 && sz > cur.sz)) byNum.set(n, { u, sz });
+  }
+  const photos = [...byNum.entries()].sort((a, b) => a[0] - b[0]).map(([, v]) => v.u);
+  // Tour / video / floor-plan links the agent attached (skip the portal's own neighborhood widgets).
+  const ext = [...new Set([...html.matchAll(/https?:\/\/[^"'<>\s]+/g)].map((m) => ent(m[0])))];
+  const tours = [];
+  for (const u of ext) {
+    if (/recolorado\.com|liveby\.com|walkscore|google|gstatic|jquery|bootstrap|cloudflare|w3\.org|schema\.org|facebook\.com\/(?:tr|plugins)|doubleclick|fonts\./i.test(u)) continue;
+    let kind = null;
+    if (/zillow\.com\/view-imx/i.test(u)) kind = '3D tour + floor plan';
+    else if (/matterport\.com/i.test(u)) kind = '3D tour';
+    else if (/floor ?plan|floorplan/i.test(u)) kind = 'Floor plan';
+    else if (/youtube\.com|youtu\.be|vimeo\.com|\.mp4(\?|$)|dropbox\.com.*\.mp4/i.test(u)) kind = 'Video';
+    else if (/tour|virtual|v1tours|hd\.pics|vht\.com|listing|propertypanorama|cloudpano|kuula/i.test(u)) kind = 'Virtual tour';
+    if (kind && !tours.some((t) => t.url === u)) tours.push({ kind, url: u.replace(/\/embed\/([\w-]+)/, '/watch?v=$1') });
+  }
+  const llm = html.match(/[?&]lat=(-?\d+\.\d+)&(?:amp;)?lng=(-?\d+\.\d+)/);
+  const geo = llm ? { lat: +llm[1], lng: +llm[2] } : null;
   return {
     fields: v,
     parking,
     notes,
     photo: firstBig || null,
+    photos,
+    tours,
+    geo,
     photoCount: new Set(imgs.map((u) => u.match(/Number=(\d+)/)?.[1])).size,
     hints: (() => {
       const feat = ['Exterior Features', 'Patio And Porch Features', 'Pool Features', 'Spa Features', 'Interior Features', 'Appliances', 'Roof', 'Property Condition', 'Outbuildings', 'Lot Features']
