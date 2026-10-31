@@ -89,7 +89,18 @@ details[open] > summary::before { content: "▾ "; }
 .sale .conc label { display: flex; gap: 4px; align-items: center; color: var(--muted); }
 .sale .conc input { width: 110px; padding: 3px 8px; font-size: 13px; }
 .sale .conc .btn { padding: 3px 10px; font-size: 13px; }
-.links {display: flex; gap: 12px; font-size: 13px; flex-wrap: wrap; }
+.market { margin-top: 14px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px; box-shadow: var(--shadow); }
+.market > summary { font-size: 15px; }
+.market .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 10px 0 6px; }
+.market .tile { background: var(--surface-2); border-radius: 8px; padding: 8px 10px; }
+.market .tl { font-size: 12px; color: var(--muted); }
+.market .tv { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.market .ts { font-size: 12px; color: var(--muted); }
+.market p { margin: 6px 0 0; }
+.room { font-size: 13px; border-radius: 8px; padding: 6px 10px; background: var(--surface-2); border-left: 3px solid var(--muted); }
+.room-high { border-left-color: var(--good); background: color-mix(in srgb, var(--good) 10%, var(--surface)); }
+.room-medium { border-left-color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, var(--surface)); }
+.links { display: flex; gap: 12px; font-size: 13px; flex-wrap: wrap; }
 
 .dlg { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--text); padding: 18px; width: min(420px, calc(100vw - 32px)); }
 .dlg.wide { width: min(640px, calc(100vw - 32px)); }
