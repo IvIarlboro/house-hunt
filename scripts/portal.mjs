@@ -50,7 +50,9 @@ export class Portal {
       const med = byKey.get(l.key);
       if (med) l.media = { key: l.key, p: [...med.entries()].sort((a, b) => a[0] - b[0]).filter(([, e]) => e.s2 || e.s4).map(([n, e]) => [n, e.s2 || '', e.s4 || '']) };
     }
-    const unavailable =[...html.matchAll(/Listing ID (?:<b>)?([A-Z]{0,3}\d{5,9})(?:<\/b>)?\. This listing is currently in a Status that is not available/g)].map((m) => m[1]);
+    // Listings on the lists that the portal won't show (withdrawn, expired, private): just an ID and record key.
+    const unavailable = [...html.matchAll(/<!--@Record:(\d+)@-->(?:(?!<!--@Record:)[\s\S]){0,600}?Listing ID (?:<b>)?([A-Z]{0,3}\d{5,9})(?:<\/b>)?\. This listing is currently in a Status that is not available/g)]
+      .map((m) => ({ key: m[1], id: m[2] }));
     if (!listings.length) throw new Error('portal list parsed 0 listings (page layout changed?)');
     return { listings, unavailable };
   }
@@ -67,19 +69,21 @@ export class Portal {
     return parseDetail(await r.text());
   }
 
-  // Record keys of every listing on the Dislikes tab. The tab renders 50 at a time, but its hidden
-  // m_hfKeys field lists all of them. Switching tabs changes the session's view, so call this last.
-  async dislikedKeys() {
+  // Record keys of every listing on one tab (Favorites, Possibilities or Dislikes). A tab renders 50 at a
+  // time, but its hidden m_hfKeys field lists all of them. Switching tabs changes the session's view, so
+  // call this after the detail reads.
+  async tabKeys(tab) {
     if (!this.form) throw new Error('call list() first');
-    const body = new URLSearchParams({ ...this.form, __EVENTTARGET: '_ctl0$m_lbDiscards', __EVENTARGUMENT: '' });
+    const target = { Favorites: '_ctl0$m_lbFavorites', Possibilities: '_ctl0$m_lbPossibilities', Dislikes: '_ctl0$m_lbDiscards' }[tab];
+    const body = new URLSearchParams({ ...this.form, __EVENTTARGET: target, __EVENTARGUMENT: '' });
     const r = await fetch(this.url, {
       method: 'POST', body,
       headers: { 'User-Agent': UA, 'Content-Type': 'application/x-www-form-urlencoded', Cookie: this.cookie(), Referer: this.url },
     });
-    if (!r.ok) throw new Error(`portal dislikes HTTP ${r.status}`);
+    if (!r.ok) throw new Error(`portal ${tab} HTTP ${r.status}`);
     this.keep(r);
     const html = await r.text();
-    if (!/<title>\s*Dislikes/i.test(html)) throw new Error('portal dislikes: tab did not open');
+    if (!new RegExp(`<title>\\s*${tab}`, 'i').test(html)) throw new Error(`portal ${tab}: tab did not open`);
     const keys = html.match(/name="_ctl0\$m_hfKeys"[^>]*value="([^"]*)"/)?.[1] ?? '';
     return new Set(keys.split(',').filter(Boolean));
   }

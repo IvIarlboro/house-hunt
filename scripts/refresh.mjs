@@ -189,13 +189,17 @@ async function main() {
   for (const l of Object.values(next)) { delete l.needsDetail; delete l.photo; delete l.photos; delete l.photosAt; }
   for (const l of Object.values(next)) if (!l.offPortal) delete l.offReason;
 
-  // A house that leaves the list page was either disliked (the list page hides Dislikes) or removed by
-  // the agent. Check the Dislikes tab only when a house has newly dropped off; it is a 2 MB page.
+  // A house that leaves the list page was disliked (the list page hides Dislikes), hidden by the portal
+  // (it then shows only as an unavailable Listing ID), or removed by the agent. Check the Dislikes tab
+  // only when a house has newly dropped off; it is a 2 MB page.
+  const hiddenIds = new Set(unavailable.map((u) => u.id));
   const unexplained = Object.values(next).filter((l) => l.offPortal && !l.offReason && l.bucket !== 'dislike');
-  if (unexplained.length) {
+  for (const l of unexplained) if (hiddenIds.has(l.id)) { l.offReason = 'hidden'; changes.push(`hidden ${l.address}`); }
+  const toCheck = unexplained.filter((l) => !l.offReason);
+  if (toCheck.length) {
     try {
-      const disliked = await portal.dislikedKeys();
-      for (const l of unexplained) {
+      const disliked = await portal.tabKeys('Dislikes');
+      for (const l of toCheck) {
         if (disliked.has(l.key)) {
           l.history.push({ at: nowIso, what: 'bucket', from: l.bucket, to: 'dislike' });
           changes.push(`disliked ${l.address}`);
@@ -205,11 +209,23 @@ async function main() {
     } catch (e) { log(`dislikes check failed: ${e.message}`); }
   }
 
+  // Hidden listings: which list each is on. Ask the Favorites tab only about ones not seen before.
+  const prevHidden = new Map((state.hidden || []).map((h) => [h.id, h]));
+  const hidden = unavailable.map((u) => ({ ...u, bucket: prevHidden.get(u.id)?.bucket || null }));
+  if (hidden.some((h) => !h.bucket)) {
+    try {
+      const fav = await portal.tabKeys('Favorites');
+      for (const h of hidden) if (!h.bucket) h.bucket = fav.has(h.key) ? 'fav' : 'poss';
+    } catch (e) { log(`favorites check failed: ${e.message}`); }
+  }
+  // The site lists the ones it has no card for, so Jeremy knows to ask Brooke about them.
+  const pubHidden = hidden.filter((h) => !next[h.id]).map(({ id, bucket }) => ({ id, bucket })).sort((a, b) => a.id.localeCompare(b.id));
+
   // Published payload: drop volatile fields so a quiet run doesn't create a commit.
-  // Dislikes are left out; a house the agent removed stays, badged "Off portal". Until the Dislikes
-  // check has explained a drop-off, leave it out too.
+  // Dislikes are left out; a house the agent removed or the portal hid stays, badged. Until the
+  // Dislikes check has explained a drop-off, leave it out.
   const pubListings = Object.values(next)
-    .filter((l) => l.bucket !== 'dislike' && (!l.offPortal || l.offReason === 'removed'))
+    .filter((l) => l.bucket !== 'dislike' && (!l.offPortal || l.offReason === 'removed' || l.offReason === 'hidden'))
     .map(({ detailAt, index, photosAt, ...rest }) => rest)
     .sort((a, b) => a.id.localeCompare(b.id));
   // Which fields changed per listing (for the log), so churn is easy to spot.
@@ -228,7 +244,7 @@ async function main() {
   }
   const rates = await fetchRates(state.rates);
   const { fetchedAt, ...pubRates } = rates || {};
-  const body = { portalUrl: PORTAL_URL, rates: rates ? pubRates : null, listings: pubListings, unavailable: [...unavailable].sort() };
+  const body = { portalUrl: PORTAL_URL, rates: rates ? pubRates : null, listings: pubListings, hidden: pubHidden };
   const hash = createHash('sha256').update(JSON.stringify(body)).digest('hex');
 
   const changed = hash !== state.hash || !existsSync(encPath);
@@ -236,7 +252,7 @@ async function main() {
     const payload = { v: 1, updatedAt: nowIso, source: 'REcolorado client portal', ...body };
     writeJson(encPath, await encryptJson(key, payload));
   }
-  state = { hash, lastCheck: nowIso, rates, listings: next };
+  state = { hash, lastCheck: nowIso, rates, hidden, listings: next };
   writeJson(STATE, state);
 
   const summary = `checked ${listings.length} listings (+${unavailable.length} unavailable), details ${todo.length}, ${changed ? 'CHANGED' : 'no change'}${changes.length ? ': ' + changes.slice(0, 8).join('; ') : ''}${diffs.length ? ' | fields: ' + diffs.slice(0, 8).join(' ') : ''}`;

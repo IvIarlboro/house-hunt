@@ -528,7 +528,7 @@
           ${oh.length ? `<span class="badge ohb">Open house ${esc(oh[0].text.split(',')[0])}</span>` : ''}
           ${isNew(l) ? '<span class="badge new">New since your last visit</span>' : ''}
           ${drop ? `<span class="badge drop">Price ↓ ${money(drop)}</span>` : ''}
-          ${off ? `<span class="badge off">${esc(l.offPortal ? 'Off portal' : /closed/i.test(l.status || '') ? 'Sold' : l.status)}</span>` : ''}
+          ${off ? `<span class="badge off">${esc(l.offPortal ? (l.offReason === 'hidden' ? 'Hidden by portal' : 'Off portal') : /closed/i.test(l.status || '') ? 'Sold' : l.status)}</span>` : ''}
         </div>
         <button class="score" type="button" data-open-rating="${esc(l.id)}" style="background:${scoreColor(ev.total)}" title="Rating out of 100. Tap for the breakdown.">${ev.total}<small>/100</small></button>
       </div>
@@ -657,6 +657,14 @@
     lowNote.innerHTML = S.showLow
       ? `Showing ${lowHere} house${lowHere === 1 ? '' : 's'} rated under ${LOW_SCORE} (faded). <button class="btn link" type="button" id="lowToggle">Hide them</button>`
       : `${lowHere} house${lowHere === 1 ? '' : 's'} rated under ${LOW_SCORE} hidden. <button class="btn link" type="button" id="lowToggle">Show them</button>`;
+    // Listings on the lists that the portal won't show at all (withdrawn, expired, private): only an ID.
+    const hid = (S.data.hidden || []).filter((h) => S.tab === 'all' || h.bucket === S.tab);
+    const hiddenNote = $('#hiddenNote');
+    hiddenNote.hidden = !hid.length;
+    if (hid.length) {
+      const group = (b, one, many) => { const ids = hid.filter((h) => h.bucket === b).map((h) => h.id); return ids.length ? `${ids.length} ${ids.length === 1 ? one : many} (listing${ids.length === 1 ? '' : 's'} ${ids.join(', ')})` : ''; };
+      hiddenNote.textContent = `Also on your lists but not viewable in the portal: ${[group('fav', 'Favorite', 'Favorites'), group('poss', 'Possibility', 'Possibilities')].filter(Boolean).join(' and ')}. ${hid.length === 1 ? 'That is usually a withdrawn, expired or private listing; Brooke can tell you which house it is.' : 'These are usually withdrawn, expired or private listings; Brooke can tell you which houses they are.'}`;
+    }
     for (const t of $$('.tab')) {
       const tab = t.dataset.tab;
       t.setAttribute('aria-selected', String(tab === S.tab));
