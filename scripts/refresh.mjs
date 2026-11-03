@@ -189,8 +189,10 @@ async function main() {
   for (const l of Object.values(next)) { delete l.needsDetail; delete l.photo; delete l.photos; delete l.photosAt; }
 
   // Published payload: drop volatile fields so a quiet run doesn't create a commit.
+  // The portal's list page hides Dislikes, so a house that drops off it was disliked (or removed by
+  // the agent): leave it out. It comes back on its own if it reappears on the portal.
   const pubListings = Object.values(next)
-    .filter((l) => l.bucket !== 'dislike')
+    .filter((l) => l.bucket !== 'dislike' && !l.offPortal)
     .map(({ detailAt, index, photosAt, ...rest }) => rest)
     .sort((a, b) => a.id.localeCompare(b.id));
   // Which fields changed per listing (for the log), so churn is easy to spot.
