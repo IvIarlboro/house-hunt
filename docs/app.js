@@ -647,11 +647,12 @@
     S.mk = market(all);
     $('#market').innerHTML = marketPanel(S.mk);
     const scored = all.filter(showable).filter(matches).map((l) => ({ l, total: evaluate(l, rg).total }));
-    // Favorites always show, whatever they score (Jeremy's rule).
-    // Favorites and Possibilities always show (Jeremy); only new unsorted houses under 50 are hidden.
+    // Favorites and Possibilities always show (Jeremy); new unsorted houses under 50 are hidden from All,
+    // but the New, unsorted tab shows every one (faded) so new arrivals can be sorted (Jeremy, Nov 3 2026).
     const isLow = (x) => x.total < LOW_SCORE && x.l.bucket !== 'fav' && x.l.bucket !== 'poss';
-    const lowHere = scored.filter((x) => isLow(x) && inTab(x.l)).length;
-    const base = scored.filter((x) => S.showLow || !isLow(x)).map((x) => x.l);
+    const keep = (x, tab) => S.showLow || tab === 'none' || !isLow(x);
+    const lowHere = S.tab === 'none' ? 0 : scored.filter((x) => isLow(x) && inTab(x.l)).length;
+    const base = scored.filter((x) => keep(x, S.tab)).map((x) => x.l);
     const lowNote = $('#lowNote');
     lowNote.hidden = !lowHere;
     lowNote.innerHTML = S.showLow
@@ -668,7 +669,7 @@
     for (const t of $$('.tab')) {
       const tab = t.dataset.tab;
       t.setAttribute('aria-selected', String(tab === S.tab));
-      $('.count', t).textContent = base.filter((l) => tab === 'all' || l.bucket === tab).length;
+      $('.count', t).textContent = scored.filter((x) => keep(x, tab) && (tab === 'all' || x.l.bucket === tab)).length;
     }
     const list = base.filter(inTab).map((l) => ({ l, ev: null }));
     const key = {
