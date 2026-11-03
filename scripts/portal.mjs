@@ -66,6 +66,23 @@ export class Portal {
     this.keep(r);
     return parseDetail(await r.text());
   }
+
+  // Record keys of every listing on the Dislikes tab. The tab renders 50 at a time, but its hidden
+  // m_hfKeys field lists all of them. Switching tabs changes the session's view, so call this last.
+  async dislikedKeys() {
+    if (!this.form) throw new Error('call list() first');
+    const body = new URLSearchParams({ ...this.form, __EVENTTARGET: '_ctl0$m_lbDiscards', __EVENTARGUMENT: '' });
+    const r = await fetch(this.url, {
+      method: 'POST', body,
+      headers: { 'User-Agent': UA, 'Content-Type': 'application/x-www-form-urlencoded', Cookie: this.cookie(), Referer: this.url },
+    });
+    if (!r.ok) throw new Error(`portal dislikes HTTP ${r.status}`);
+    this.keep(r);
+    const html = await r.text();
+    if (!/<title>\s*Dislikes/i.test(html)) throw new Error('portal dislikes: tab did not open');
+    const keys = html.match(/name="_ctl0\$m_hfKeys"[^>]*value="([^"]*)"/)?.[1] ?? '';
+    return new Set(keys.split(',').filter(Boolean));
+  }
 }
 
 function parseListRecord(key, chunk) {

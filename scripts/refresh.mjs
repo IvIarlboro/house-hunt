@@ -187,12 +187,29 @@ async function main() {
     } catch (e) { log(`detail failed ${l.id} ${l.address}: ${e.message}`); }
   }
   for (const l of Object.values(next)) { delete l.needsDetail; delete l.photo; delete l.photos; delete l.photosAt; }
+  for (const l of Object.values(next)) if (!l.offPortal) delete l.offReason;
+
+  // A house that leaves the list page was either disliked (the list page hides Dislikes) or removed by
+  // the agent. Check the Dislikes tab only when a house has newly dropped off; it is a 2 MB page.
+  const unexplained = Object.values(next).filter((l) => l.offPortal && !l.offReason && l.bucket !== 'dislike');
+  if (unexplained.length) {
+    try {
+      const disliked = await portal.dislikedKeys();
+      for (const l of unexplained) {
+        if (disliked.has(l.key)) {
+          l.history.push({ at: nowIso, what: 'bucket', from: l.bucket, to: 'dislike' });
+          changes.push(`disliked ${l.address}`);
+          l.bucket = 'dislike'; l.offReason = 'dislike';
+        } else { l.offReason = 'removed'; changes.push(`removed ${l.address}`); }
+      }
+    } catch (e) { log(`dislikes check failed: ${e.message}`); }
+  }
 
   // Published payload: drop volatile fields so a quiet run doesn't create a commit.
-  // The portal's list page hides Dislikes, so a house that drops off it was disliked (or removed by
-  // the agent): leave it out. It comes back on its own if it reappears on the portal.
+  // Dislikes are left out; a house the agent removed stays, badged "Off portal". Until the Dislikes
+  // check has explained a drop-off, leave it out too.
   const pubListings = Object.values(next)
-    .filter((l) => l.bucket !== 'dislike' && !l.offPortal)
+    .filter((l) => l.bucket !== 'dislike' && (!l.offPortal || l.offReason === 'removed'))
     .map(({ detailAt, index, photosAt, ...rest }) => rest)
     .sort((a, b) => a.id.localeCompare(b.id));
   // Which fields changed per listing (for the log), so churn is easy to spot.
