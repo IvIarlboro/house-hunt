@@ -333,19 +333,27 @@
     }
     return null;
   }
-  // Usable RV parking length at this house vs the reference spot (shared.rvRef, e.g. the current home),
-  // from aerial measurements in shared.rvft[id] = {ft, plus}. Bar runs 0-150% with ticks at the trailer
-  // length and at 100% of the reference.
+  // Longest RV spot at this house, from aerial measurements in shared.rvft[id] = {ft, plus}.
+  // Compared with the trailer only; the house-to-house % comparison is the paved-area line below.
   const TRAILER_FT = 37;
   function rvLen(l) {
-    const m = S.shared?.rvft?.[l.id], ref = S.shared?.rvRef;
-    if (!m?.ft || !ref?.ft) return '';
-    const pct = Math.round(m.ft / ref.ft * 100), cls = m.ft >= ref.ft ? 'good' : m.ft >= TRAILER_FT || m.plus ? 'warn' : 'bad';
-    const pos = (ft) => Math.min(100, ft / ref.ft * 100 / 1.5);
-    const plus = m.plus ? '+' : '';
-    return `<div class="rvlen rvlen-${cls}" title="Longest straight spot for the ${TRAILER_FT} ft trailer, measured on aerial photos (give or take a couple of feet). Not part of the rating.">
-      <div class="rvbar"><i style="width:${pos(m.ft)}%"></i><s style="left:${pos(TRAILER_FT)}%" title="Trailer ${TRAILER_FT} ft"></s><b style="left:${pos(ref.ft)}%" title="${esc(ref.name)} ${ref.ft} ft"></b></div>
-      <span>RV spot ~${m.ft}${plus} ft · <b>${pct}%${plus}</b> of ${esc(ref.name)} (${ref.ft} ft)${m.ft < TRAILER_FT && !m.plus ? ` · ${TRAILER_FT - m.ft} ft short of the trailer` : ''}</span></div>`;
+    const m = S.shared?.rvft?.[l.id];
+    if (!m?.ft) return '';
+    const plus = m.plus ? '+' : '', short = m.ft < TRAILER_FT && !m.plus;
+    return `<div class="facts" title="Longest straight spot for the ${TRAILER_FT} ft trailer, measured on aerial photos (give or take a couple of feet).">RV spot ~${m.ft}${plus} ft${short ? ` · ${TRAILER_FT - m.ft} ft short of the ${TRAILER_FT} ft trailer` : ''}</div>`;
+  }
+
+  // Total paved/parking area (driveways, pads, gravel parking; not sidewalks or patios) from aerial
+  // measurements in shared.paved[id] = {sqft, gravel, parts}, as a % of the reference house (shared.pavedRef).
+  // Bar runs 0-200% with a tick at 100%. Not part of the rating.
+  function pavedLine(l) {
+    const m = S.shared?.paved?.[l.id], ref = S.shared?.pavedRef;
+    if (!m?.sqft || !ref?.sqft) return '';
+    const pct = Math.round(m.sqft / ref.sqft * 100), pos = (v) => Math.min(100, v / ref.sqft * 50);
+    const n = (v) => Math.round(v).toLocaleString();
+    return `<div class="rvlen" title="Driveways, parking and RV pads, including gravel; not the public sidewalk, walkways or patios. Measured on aerial photos, roughly ±10%. Not part of the rating.${m.parts ? ' ' + esc(m.parts) : ''}">
+      <div class="rvbar"><i style="width:${pos(m.sqft)}%"></i><b style="left:${pos(ref.sqft)}%" title="${esc(ref.name)} ${n(ref.sqft)} sq ft"></b></div>
+      <span>Paved ~${n(m.sqft)} sq ft${m.gravel ? ` (${n(m.gravel)} gravel)` : ''} · <b>${pct}%</b> of ${esc(ref.name)} (${n(ref.sqft)})</span></div>`;
   }
 
   function saleBlock(l, canEdit) {
@@ -567,6 +575,7 @@
         <div class="chips"><span class="chip ${rvCls}">RV: ${esc(rv.label)}</span>${highlights(l)}</div>
         ${rv.why || rv.ev ? `<div class="facts">${esc(rv.why ? rv.why : rv.ev)}</div>` : ''}
         ${rvLen(l)}
+        ${pavedLine(l)}
         <details ${S.openRatings.has(l.id) ? 'open' : ''} data-rating="${esc(l.id)}"><summary>Rating breakdown${(() => { const n = ITEMS.filter((it) => ev.items[it.k]?.v === 'unknown').length; return n ? ` <span class="unk-chip">⚠ ${n} unknown</span>` : ''; })()}</summary><div class="rate">${rateRows(l, ev, canEdit)}</div>
           <form class="conc sqftfix" data-sqft="${esc(l.id)}"><label>Finished sq ft correction<input inputmode="numeric" value="${S.shared?.sqft?.[l.id]?.fin ?? ''}" placeholder="${sqftInfo(l).fin ?? ''}" ${canEdit ? '' : 'disabled'}></label><button class="btn" ${canEdit ? '' : 'disabled'}>Save</button></form>
           ${howScoring()}</details>
@@ -694,6 +703,7 @@
       payment: (x) => payment(x.l)?.total ?? 1e9,
       love: (x) => -(loveScore(x.l) * 1000 + evaluate(x.l, rg).total),
       room: (x) => -(room(x.l, S.mk)?.pts ?? -99),
+      paved: (x) => -(S.shared?.paved?.[x.l.id]?.sqft ?? -1),
     }[S.sort] || ((x) => 0);
     list.sort((a, b) => key(a) - key(b));
     // Keep the order steady while editing: re-sort only when the tab/sort/filters/search change,
