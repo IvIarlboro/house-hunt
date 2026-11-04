@@ -333,6 +333,21 @@
     }
     return null;
   }
+  // Usable RV parking length at this house vs the reference spot (shared.rvRef, e.g. the current home),
+  // from aerial measurements in shared.rvft[id] = {ft, plus}. Bar runs 0-150% with ticks at the trailer
+  // length and at 100% of the reference.
+  const TRAILER_FT = 37;
+  function rvLen(l) {
+    const m = S.shared?.rvft?.[l.id], ref = S.shared?.rvRef;
+    if (!m?.ft || !ref?.ft) return '';
+    const pct = Math.round(m.ft / ref.ft * 100), cls = m.ft >= ref.ft ? 'good' : m.ft >= TRAILER_FT || m.plus ? 'warn' : 'bad';
+    const pos = (ft) => Math.min(100, ft / ref.ft * 100 / 1.5);
+    const plus = m.plus ? '+' : '';
+    return `<div class="rvlen rvlen-${cls}" title="Longest straight spot for the ${TRAILER_FT} ft trailer, measured on aerial photos (give or take a couple of feet). Not part of the rating.">
+      <div class="rvbar"><i style="width:${pos(m.ft)}%"></i><s style="left:${pos(TRAILER_FT)}%" title="Trailer ${TRAILER_FT} ft"></s><b style="left:${pos(ref.ft)}%" title="${esc(ref.name)} ${ref.ft} ft"></b></div>
+      <span>RV spot ~${m.ft}${plus} ft · <b>${pct}%${plus}</b> of ${esc(ref.name)} (${ref.ft} ft)${m.ft < TRAILER_FT && !m.plus ? ` · ${TRAILER_FT - m.ft} ft short of the trailer` : ''}</span></div>`;
+  }
+
   function saleBlock(l, canEdit) {
     const s = sale(l); if (!s) return '';
     const d = (x) => (x ? x.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '?');
@@ -551,6 +566,7 @@
         <div class="facts">${l.beds ?? '?'} bd · ${l.baths ?? '?'} ba · ${(() => { const si = sqftInfo(l), fin = si.fin, tot = l.sqftTotal; return fin ? `${Math.round(fin).toLocaleString()} sq ft finished${si.fixed ? ` <span class="fixnote" title="${esc(si.how)}">(listing said ${si.listed ? si.listed.toLocaleString() : '?'}; ${esc(si.how.startsWith('corrected') ? si.how : 'fixed')})</span>` : tot && tot > fin ? ` (${(tot - fin).toLocaleString()} more unfinished)` : ''}` : ''; })()} · Taxes ${money(taxOf(l))}${l.detail?.fields?.Cooling ? ' · ' + esc(l.detail.fields.Cooling) : ''}</div>
         <div class="chips"><span class="chip ${rvCls}">RV: ${esc(rv.label)}</span>${highlights(l)}</div>
         ${rv.why || rv.ev ? `<div class="facts">${esc(rv.why ? rv.why : rv.ev)}</div>` : ''}
+        ${rvLen(l)}
         <details ${S.openRatings.has(l.id) ? 'open' : ''} data-rating="${esc(l.id)}"><summary>Rating breakdown${(() => { const n = ITEMS.filter((it) => ev.items[it.k]?.v === 'unknown').length; return n ? ` <span class="unk-chip">⚠ ${n} unknown</span>` : ''; })()}</summary><div class="rate">${rateRows(l, ev, canEdit)}</div>
           <form class="conc sqftfix" data-sqft="${esc(l.id)}"><label>Finished sq ft correction<input inputmode="numeric" value="${S.shared?.sqft?.[l.id]?.fin ?? ''}" placeholder="${sqftInfo(l).fin ?? ''}" ${canEdit ? '' : 'disabled'}></label><button class="btn" ${canEdit ? '' : 'disabled'}>Save</button></form>
           ${howScoring()}</details>
