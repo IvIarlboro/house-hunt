@@ -27,6 +27,11 @@ const MAX_DETAILS_PER_RUN = 12;
 const args = new Set(process.argv.slice(2));
 const NO_PUSH = args.has('--no-push');
 const ALL = args.has('--all');
+// Disliked houses are read from the Dislikes tab about hourly (it is ~3 MB), and right away when a house
+// newly drops off the list. --dislikes forces a sweep and reads every disliked house's detail page.
+const SWEEP_DISLIKES = args.has('--dislikes');
+const DISLIKE_SWEEP_MS = 55 * 60e3;
+const DISLIKE_DETAILS_PER_RUN = 20;
 
 mkdirSync(HOME, { recursive: true });
 mkdirSync(DATA, { recursive: true });
@@ -157,9 +162,10 @@ async function main() {
     l.needsDetail = ALL || !prev || !prev.detailAt || prev.price !== cur.price || prev.status !== cur.status || prev.bucket !== cur.bucket;
     next[cur.id] = l;
   }
-  // Keep listings that dropped off the portal page, marked as such.
+  // Keep listings that dropped off the portal page, marked as such. Disliked houses never show on the
+  // list page; the Dislikes sweep below tracks them.
   for (const [id, prev] of Object.entries(state.listings)) {
-    if (!next[id]) next[id] = { ...prev, offPortal: prev.offPortal || nowIso, needsDetail: false };
+    if (!next[id]) next[id] = prev.bucket === 'dislike' ? { ...prev, needsDetail: false } : { ...prev, offPortal: prev.offPortal || nowIso, needsDetail: false };
   }
   for (const l of Object.values(next)) if (!l.offPortal || listings.some((x) => x.id === l.id)) delete l.offPortal;
 
@@ -187,7 +193,7 @@ async function main() {
     } catch (e) { log(`detail failed ${l.id} ${l.address}: ${e.message}`); }
   }
   for (const l of Object.values(next)) { delete l.needsDetail; delete l.photo; delete l.photos; delete l.photosAt; }
-  for (const l of Object.values(next)) if (!l.offPortal) delete l.offReason;
+  for (const l of Object.values(next)) if (!l.offPortal && l.bucket !== 'dislike') delete l.offReason;
 
   // A house that leaves the list page was disliked (the list page hides Dislikes), hidden by the portal
   // (it then shows only as an unavailable Listing ID), or removed by the agent. Check the Dislikes tab
@@ -203,7 +209,7 @@ async function main() {
         if (disliked.has(l.key)) {
           l.history.push({ at: nowIso, what: 'bucket', from: l.bucket, to: 'dislike' });
           changes.push(`disliked ${l.address}`);
-          l.bucket = 'dislike'; l.offReason = 'dislike';
+          l.bucket = 'dislike'; l.offReason = 'dislike'; delete l.offPortal; delete l.goneAt;
         } else { l.offReason = 'removed'; changes.push(`removed ${l.address}`); }
       }
     } catch (e) { log(`dislikes check failed: ${e.message}`); }
@@ -218,14 +224,66 @@ async function main() {
       for (const h of hidden) if (!h.bucket) h.bucket = fav.has(h.key) ? 'fav' : 'poss';
     } catch (e) { log(`favorites check failed: ${e.message}`); }
   }
+  // Dislikes sweep: every house on the Dislikes tab gets a card (Disliked tab on the site) and the same
+  // detail read as the rest. A disliked house leaves the site only when it is on no portal list at all.
+  let dislikeSweepAt = state.dislikeSweepAt || null;
+  let dislikeDetails = 0;
+  if (SWEEP_DISLIKES || toCheck.length || !dislikeSweepAt || now - Date.parse(dislikeSweepAt) > DISLIKE_SWEEP_MS) {
+    try {
+      const d = await portal.dislikes();
+      const onTab = new Set();
+      let added = 0;
+      for (const cur of d.listings) {
+        onTab.add(cur.id);
+        if (next[cur.id] && next[cur.id].bucket !== 'dislike') continue; // moved off Dislikes since the tab loaded
+        const prev = next[cur.id];
+        const l = { ...(prev || {}), ...cur, bucket: 'dislike', offReason: 'dislike' };
+        delete l.offPortal; delete l.goneAt;
+        l.firstSeen = prev?.firstSeen || nowIso;
+        l.history = prev?.history ? [...prev.history] : [];
+        if (!prev) added++;
+        else {
+          if (prev.price !== cur.price) { l.history.push({ at: nowIso, what: 'price', from: prev.price, to: cur.price }); changes.push(`price ${cur.address}`); }
+          if (prev.status !== cur.status) { l.history.push({ at: nowIso, what: 'status', from: prev.status, to: cur.status }); changes.push(`status ${cur.address}`); }
+        }
+        l.needsDetail = SWEEP_DISLIKES || !prev?.detailAt || prev.price !== cur.price || prev.status !== cur.status;
+        next[cur.id] = l;
+      }
+      if (added) changes.push(`added ${added} disliked`);
+      for (const l of Object.values(next)) {
+        if (l.bucket === 'dislike' && !onTab.has(l.id) && !l.goneAt) { l.goneAt = nowIso; changes.push(`gone ${l.address}`); }
+      }
+      const todoD = Object.values(next).filter((l) => l.needsDetail && l.bucket === 'dislike' && onTab.has(l.id) && Number.isInteger(l.index)).slice(0, SWEEP_DISLIKES ? 999 : DISLIKE_DETAILS_PER_RUN);
+      for (const l of todoD) {
+        try {
+          const dd = await portal.detail(l.index);
+          if (!Object.keys(dd.fields).length) throw new Error('detail page had no fields');
+          delete l.needsDetail;
+          l.detail ={ fields: dd.fields, parking: dd.parking, photoCount: dd.photoCount, hints: dd.hints };
+          l.tours = dd.tours || [];
+          l.openHouses = (dd.openHouses || []).map((t) => openHouse(t, now));
+          if (dd.geo) l.geo = dd.geo;
+          l.portalNotes = dd.notes.map((n) => ({ date: absDate(n.when, now), text: n.text, by: n.by }));
+          l.detailAt = nowIso;
+          dislikeDetails++;
+          await sleep(400);
+        } catch (e) { log(`dislike detail failed ${l.id} ${l.address}: ${e.message}`); }
+      }
+      // A house still waiting for its detail read is picked up next run.
+      const behind = Object.values(next).some((l) => l.needsDetail && l.bucket === 'dislike');
+      dislikeSweepAt = behind ? null : nowIso;
+    } catch (e) { log(`dislikes sweep failed: ${e.message}`); }
+    for (const l of Object.values(next)) { delete l.needsDetail; delete l.photo; delete l.photos; delete l.photosAt; }
+  }
+
   // The site lists the ones it has no card for, so Jeremy knows to ask Brooke about them.
   const pubHidden = hidden.filter((h) => !next[h.id]).map(({ id, bucket }) => ({ id, bucket })).sort((a, b) => a.id.localeCompare(b.id));
 
   // Published payload: drop volatile fields so a quiet run doesn't create a commit.
-  // Dislikes are left out; a house the agent removed or the portal hid stays, badged. Until the
-  // Dislikes check has explained a drop-off, leave it out.
+  // Dislikes show on their own tab until they leave the portal's lists altogether; a house the agent
+  // removed or the portal hid stays, badged. Until the Dislikes check has explained a drop-off, leave it out.
   const pubListings = Object.values(next)
-    .filter((l) => l.bucket !== 'dislike' && (!l.offPortal || l.offReason === 'removed' || l.offReason === 'hidden'))
+    .filter((l) => (l.bucket === 'dislike' ? !l.goneAt : (!l.offPortal || l.offReason === 'removed' || l.offReason === 'hidden')))
     .map(({ detailAt, index, photosAt, ...rest }) => rest)
     .sort((a, b) => a.id.localeCompare(b.id));
   // Which fields changed per listing (for the log), so churn is easy to spot.
@@ -252,10 +310,10 @@ async function main() {
     const payload = { v: 1, updatedAt: nowIso, source: 'REcolorado client portal', ...body };
     writeJson(encPath, await encryptJson(key, payload));
   }
-  state = { hash, lastCheck: nowIso, rates, hidden, listings: next };
+  state = { hash, lastCheck: nowIso, dislikeSweepAt, rates, hidden, listings: next };
   writeJson(STATE, state);
 
-  const summary = `checked ${listings.length} listings (+${unavailable.length} unavailable), details ${todo.length}, ${changed ? 'CHANGED' : 'no change'}${changes.length ? ': ' + changes.slice(0, 8).join('; ') : ''}${diffs.length ? ' | fields: ' + diffs.slice(0, 8).join(' ') : ''}`;
+  const summary = `checked ${listings.length} listings (+${unavailable.length} unavailable), details ${todo.length}${dislikeDetails ? ` + ${dislikeDetails} disliked` : ''}, ${changed ? 'CHANGED' : 'no change'}${changes.length ? ': ' + changes.slice(0, 8).join('; ') : ''}${diffs.length ? ' | fields: ' + diffs.slice(0, 8).join(' ') : ''}`;
   if (changed && !NO_PUSH) {
     try {
       git('add', 'docs/data/listings.enc.json', 'docs/data/meta.json');

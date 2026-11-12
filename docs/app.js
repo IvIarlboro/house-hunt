@@ -298,8 +298,10 @@
   }
 
   // ---------- rendering ----------
-  const inTab = (l) => S.tab === 'all' ? true : l.bucket === S.tab;
-  const showable = (l) => l.bucket !== 'dislike' && (S.showOff || (ACTIVE.test(l.status || '') && !l.offPortal)) && (!S.ohOnly || upcomingOH(l).length > 0);
+  // All = everything still in the running; disliked houses only show on their own tab.
+  const inTabOf = (l, tab) => tab === 'all' ? l.bucket !== 'dislike' : l.bucket === tab;
+  const inTab = (l) => inTabOf(l, S.tab);
+  const showable = (l) => (S.showOff || (ACTIVE.test(l.status || '') && !l.offPortal)) && (!S.ohOnly || upcomingOH(l).length > 0);
   // Open houses still to come (today or later, local date).
   function upcomingOH(l) {
     const d = new Date(); const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -310,7 +312,7 @@
     const notes = [...(l.portalNotes || []), ...((S.shared?.notes || []).filter((n) => n.lid === l.id))].map((n) => n.text).join(' ');
     return `${l.address} ${l.city} ${l.id} ${notes}`.toLowerCase().includes(S.q.toLowerCase());
   }
-  const isNew = (l) => S.prevVisit && l.firstSeen > S.prevVisit;
+  const isNew = (l) => S.prevVisit && l.firstSeen > S.prevVisit && l.bucket !== 'dislike';
   // ---------- pending / sold ----------
   const usDate = (s) => { const m = String(s || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/); if (!m) return null; const y = m[3].length === 2 ? 2000 + +m[3] : +m[3]; return new Date(y, m[1] - 1, +m[2]); };
   const dayDiff = (a, b) => (a && b ? Math.round((b - a) / 864e5) : null);
@@ -535,7 +537,7 @@
     const { waze, gmap } = mapLinks(l);
     const phs = photoList(l), first = phs[0];
     const nPhotos = phs.length;
-    const bucket = { fav: ['Favorite', 'fav'], poss: ['Possibility', ''], none: ['New from agent', 'new'] }[l.bucket] || ['', ''];
+    const bucket = { fav: ['Favorite', 'fav'], poss: ['Possibility', ''], none: ['New from agent', 'new'], dislike: ['Disliked', 'off'] }[l.bucket] || ['', ''];
     const drop = priceDrop(l);
     const off = !ACTIVE.test(l.status || '') || l.offPortal;
     const rv = ev.items.rv;
@@ -667,16 +669,19 @@
 
   function render() {
     if (!S.data) return;
-    const all = (S.data.listings || []).filter((l) => l.bucket !== 'dislike');
-    const rg = ranges(all.filter((l) => !l.offPortal));
-    S.mk = market(all);
+    const all = S.data.listings || [];
+    // Score ranges and the market panel come from the houses still in the running, so adding the
+    // Disliked tab doesn't move anyone's score.
+    const running = all.filter((l) => l.bucket !== 'dislike');
+    const rg = ranges(running.filter((l) => !l.offPortal));
+    S.mk = market(running);
     $('#market').innerHTML = marketPanel(S.mk);
     const scored = all.filter(showable).filter(matches).map((l) => ({ l, total: evaluate(l, rg).total }));
     // Favorites and Possibilities always show (Jeremy); new unsorted houses under 50 are hidden from All,
     // but the New, unsorted tab shows every one (faded) so new arrivals can be sorted (Jeremy, Nov 3 2026).
     const isLow = (x) => x.total < LOW_SCORE && x.l.bucket !== 'fav' && x.l.bucket !== 'poss';
-    const keep = (x, tab) => S.showLow || tab === 'none' || !isLow(x);
-    const lowHere = S.tab === 'none' ? 0 : scored.filter((x) => isLow(x) && inTab(x.l)).length;
+    const keep = (x, tab) => S.showLow || tab === 'none' || tab === 'dislike' || !isLow(x);
+    const lowHere = S.tab === 'none' || S.tab === 'dislike' ? 0 : scored.filter((x) => isLow(x) && inTab(x.l)).length;
     const base = scored.filter((x) => keep(x, S.tab)).map((x) => x.l);
     const lowNote = $('#lowNote');
     lowNote.hidden = !lowHere;
@@ -694,7 +699,7 @@
     for (const t of $$('.tab')) {
       const tab = t.dataset.tab;
       t.setAttribute('aria-selected', String(tab === S.tab));
-      $('.count', t).textContent = scored.filter((x) => keep(x, tab) && (tab === 'all' || x.l.bucket === tab)).length;
+      $('.count', t).textContent = scored.filter((x) => keep(x, tab) && inTabOf(x.l, tab)).length;
     }
     const list = base.filter(inTab).map((l) => ({ l, ev: null }));
     const key = {

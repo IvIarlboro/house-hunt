@@ -28,33 +28,52 @@ export class Portal {
     if (!r.ok) throw new Error(`portal list HTTP ${r.status}`);
     this.keep(r);
     const html = await r.text();
-    this.form = {};
-    for (const m of html.matchAll(/<input[^>]+type="hidden"[^>]*>/gi)) {
-      const n = m[0].match(/name="([^"]+)"/)?.[1];
-      const v = m[0].match(/value="([^"]*)"/)?.[1] ?? '';
-      if (n) this.form[n] = ent(v);
-    }
-    const parts = html.split(/<!--@Record:(\d+)@-->/);
-    const listings = [];
-    for (let i = 1; i < parts.length; i += 2) {
-      const rec = parseListRecord(parts[i], parts[i + 1]);
-      if (rec) listings.push(rec);
-    }
-    // Gather every photo link on the page by listing key (the carousel data sits outside each record block).
-    const byKey = new Map();
-    for (const m of html.matchAll(/GetMedia\.ashx\?Key=(\d+)&(?:amp;)?TableID=9&(?:amp;)?Type=1&(?:amp;)?Number=(\d+)&(?:amp;)?Size=(\d)&(?:amp;)?exk=([0-9a-f]+)/g)) {
-      let med = byKey.get(m[1]); if (!med) byKey.set(m[1], (med = new Map()));
-      const e = med.get(+m[2]) || {}; e['s' + m[3]] = m[4]; med.set(+m[2], e);
-    }
-    for (const l of listings) {
-      const med = byKey.get(l.key);
-      if (med) l.media = { key: l.key, p: [...med.entries()].sort((a, b) => a[0] - b[0]).filter(([, e]) => e.s2 || e.s4).map(([n, e]) => [n, e.s2 || '', e.s4 || '']) };
-    }
-    // Listings on the lists that the portal won't show (withdrawn, expired, private): just an ID and record key.
-    const unavailable = [...html.matchAll(/<!--@Record:(\d+)@-->(?:(?!<!--@Record:)[\s\S]){0,600}?Listing ID (?:<b>)?([A-Z]{0,3}\d{5,9})(?:<\/b>)?\. This listing is currently in a Status that is not available/g)]
-      .map((m) => ({ key: m[1], id: m[2] }));
+    this.form = hiddenFields(html);
+    const { listings, unavailable } = parseRecords(html);
     if (!listings.length) throw new Error('portal list parsed 0 listings (page layout changed?)');
     return { listings, unavailable };
+  }
+
+  // Every listing on the Dislikes tab, as list records (bucket 'dislike'). The tab renders 50; the rest
+  // come from the same ByKeys call the portal's "See More Results" button makes. Afterwards detail(index)
+  // opens a disliked listing by its index on this tab, so call this after the All-page detail reads.
+  async dislikes() {
+    if (!this.form) throw new Error('call list() first');
+    const html = await this.post({ ...this.form, __EVENTTARGET: '_ctl0$m_lbDiscards', __EVENTARGUMENT: '' }, 'Dislikes');
+    if (!/<title>\s*Dislikes/i.test(html)) throw new Error('portal Dislikes: tab did not open');
+    this.form = hiddenFields(html);
+    const keys = (html.match(/name="_ctl0\$m_hfKeys"[^>]*value="([^"]*)"/)?.[1] ?? '').split(',').filter(Boolean);
+    const first = parseRecords(html);
+    const listings = [...first.listings], unavailable = [...first.unavailable];
+    const seen = new Set([...html.matchAll(/<!--@Record:(\d+)@-->/g)].map((m) => m[1]));
+    const weec = html.match(/setSerializedWEEC\('((?:[^'\\]|\\.)*)'\)/)?.[1] ?? '';
+    const cid = html.match(/"PortalContact":"([^"]+)"/)?.[1] ?? '';
+    const rest = keys.filter((k) => !seen.has(k));
+    for (let at = 0; at < rest.length; at += 50) {
+      const batch = rest.slice(at, at + 50);
+      const f = new URLSearchParams({ keys: batch.join(','), ri: '-1', did: '67', tid: '9', l: '1', idx: '0', bkt: 'true', enh: '1', pbs: '1', cid, weec });
+      batch.forEach((_, i) => f.append('ril[]', String(seen.size + at + i + 1)));
+      const r = await fetch(new URL(this.url).origin + '/matrix/public/getdisplay/ByKeys.ashx?drm=email', {
+        method: 'POST', body: f,
+        headers: { 'User-Agent': UA, 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest', Cookie: this.cookie(), Referer: this.url },
+      });
+      if (!r.ok) throw new Error(`portal dislikes page HTTP ${r.status}`);
+      this.keep(r);
+      const more = parseRecords(await r.text());
+      listings.push(...more.listings); unavailable.push(...more.unavailable);
+    }
+    for (const l of listings) l.bucket = 'dislike';
+    return { listings, unavailable, keys };
+  }
+
+  async post(fields, what) {
+    const r = await fetch(this.url, {
+      method: 'POST', body: new URLSearchParams(fields),
+      headers: { 'User-Agent': UA, 'Content-Type': 'application/x-www-form-urlencoded', Cookie: this.cookie(), Referer: this.url },
+    });
+    if (!r.ok) throw new Error(`portal ${what} HTTP ${r.status}`);
+    this.keep(r);
+    return r.text();
   }
 
   async detail(index) {
@@ -89,10 +108,45 @@ export class Portal {
   }
 }
 
+function hiddenFields(html) {
+  const form = {};
+  for (const m of html.matchAll(/<input[^>]+type="hidden"[^>]*>/gi)) {
+    const n = m[0].match(/name="([^"]+)"/)?.[1];
+    const v = m[0].match(/value="([^"]*)"/)?.[1] ?? '';
+    if (n) form[n] = ent(v);
+  }
+  return form;
+}
+
+// Listing records on a results page (the All page, a tab, or a ByKeys batch).
+function parseRecords(html) {
+  const parts = html.split(/<!--@Record:(\d+)@-->/);
+  const listings = [];
+  for (let i = 1; i < parts.length; i += 2) {
+    const rec = parseListRecord(parts[i], parts[i + 1]);
+    if (rec) listings.push(rec);
+  }
+  // Gather every photo link on the page by listing key (the carousel data sits outside each record block).
+  const byKey = new Map();
+  for (const m of html.matchAll(/GetMedia\.ashx\?Key=(\d+)&(?:amp;)?TableID=9&(?:amp;)?Type=1&(?:amp;)?Number=(\d+)&(?:amp;)?Size=(\d)&(?:amp;)?exk=([0-9a-f]+)/g)) {
+    let med = byKey.get(m[1]); if (!med) byKey.set(m[1], (med = new Map()));
+    const e = med.get(+m[2]) || {}; e['s' + m[3]] = m[4]; med.set(+m[2], e);
+  }
+  for (const l of listings) {
+    const med = byKey.get(l.key);
+    if (med) l.media = { key: l.key, p: [...med.entries()].sort((a, b) => a[0] - b[0]).filter(([, e]) => e.s2 || e.s4).map(([n, e]) => [n, e.s2 || '', e.s4 || '']) };
+  }
+  // Listings on the lists that the portal won't show (withdrawn, expired, private): just an ID and record key.
+  const unavailable = [...html.matchAll(/<!--@Record:(\d+)@-->(?:(?!<!--@Record:)[\s\S]){0,600}?Listing ID (?:<b>)?([A-Z]{0,3}\d{5,9})(?:<\/b>)?\. This listing is currently in a Status that is not available/g)]
+    .map((m) => ({ key: m[1], id: m[2] }));
+  return { listings, unavailable };
+}
+
 function parseListRecord(key, chunk) {
   const id = chunk.match(/Listing ID:\s*(?:<[^>]+>\s*)*([A-Z]{0,3}\d{5,9})/)?.[1];
   if (!id) return null;
-  const addrM = chunk.match(/Redisplay\|69,,(\d+)'\)">([^<]+)<\/a>/) || chunk.match(/Redisplay\|69,,(\d+)&#39;\)">([^<]+)<\/a>/);
+  // The address link's postback names the listing's index on the page (ByKeys batches add a data- attribute).
+  const addrM = chunk.match(/Redisplay\|69,,(\d+)(?:'|&#39;)\)"[^>]*>([^<]+)<\/a>/);
   const cityLine = chunk.match(/<span class="formula J_formula">\s*([^<]*?,\s*CO\s*\d{5})\s*<\/span>/)?.[1];
   const photo = chunk.match(/https:\/\/matrixmedia\.recolorado\.com\/mediaserver\/GetMedia\.ashx\?[^"']+/)?.[0];
   // Every photo of this listing, from the list page's carousel. These links are stable (the detail page's
