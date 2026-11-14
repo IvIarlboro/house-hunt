@@ -108,6 +108,25 @@ function openHouse(text, now = new Date()) {
   return { date: `${y}-${String(mi + 1).padStart(2, '0')}-${m[2].padStart(2, '0')}`, text };
 }
 
+// The same house can be on the portal twice: once on REcolorado and once on the northern Colorado MLS
+// (IRES, "IR…" listing numbers). The address is the house, not the listing number.
+const addrKey = (l) => `${l.address}|${l.city}`.toLowerCase().replace(/[^a-z0-9|]+/g, ' ').replace(/ ?\| ?/g, '|').trim();
+const decidedAt = (l) => (l.history || []).filter((h) => h.what === 'bucket').map((h) => h.at).sort().pop() || l.firstSeen || '';
+// One card per address. It keeps the earliest-seen listing id (where the family's ratings and notes
+// live), takes its list from whichever copy was moved most recently (so disliking either copy sticks),
+// and shows a live copy's details if the oldest one has left the portal.
+function mergeByAddress(ls) {
+  const groups = new Map();
+  for (const l of ls) { const k = addrKey(l); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(l); }
+  return [...groups.values()].map((g) => {
+    if (g.length === 1) return g[0];
+    const base = g.reduce((a, b) => ((a.firstSeen || '') <= (b.firstSeen || '') ? a : b));
+    const decided = g.reduce((a, b) => (decidedAt(a) >= decidedAt(b) ? a : b));
+    const src = !base.offPortal ? base : g.find((l) => !l.offPortal) || base;
+    return { ...src, id: base.id, firstSeen: base.firstSeen, bucket: decided.bucket, aliases: g.filter((l) => l !== base).map((l) => l.id).sort() };
+  });
+}
+
 function git(...a) {
   // On Actions, checkout's own credentials push; on the PC, use Windows Credential Manager.
   const helper = IN_ACTIONS ? [] : ['-c', 'credential.helper=', '-c', 'credential.helper=manager'];
@@ -148,12 +167,13 @@ async function main() {
 
   const next = {};
   const changes = [];
+  const knownAddr = new Set(Object.values(state.listings).map(addrKey));
   for (const cur of listings) {
     const prev = state.listings[cur.id];
     const l = { ...(prev || {}), ...cur };
     l.firstSeen = prev?.firstSeen || nowIso;
     l.history = prev?.history ? [...prev.history] : [];
-    if (!prev) changes.push(`new ${cur.address}`);
+    if (!prev) changes.push(knownAddr.has(addrKey(cur)) ? `second listing ${cur.address}` : `new ${cur.address}`);
     else {
       if (prev.price !== cur.price) { l.history.push({ at: nowIso, what: 'price', from: prev.price, to: cur.price }); changes.push(`price ${cur.address}`); }
       if (prev.status !== cur.status) { l.history.push({ at: nowIso, what: 'status', from: prev.status, to: cur.status }); changes.push(`status ${cur.address}`); }
@@ -282,8 +302,8 @@ async function main() {
   // Published payload: drop volatile fields so a quiet run doesn't create a commit.
   // Dislikes show on their own tab until they leave the portal's lists altogether; a house the agent
   // removed or the portal hid stays, badged. Until the Dislikes check has explained a drop-off, leave it out.
-  const pubListings = Object.values(next)
-    .filter((l) => (l.bucket === 'dislike' ? !l.goneAt : (!l.offPortal || l.offReason === 'removed' || l.offReason === 'hidden')))
+  const pubListings = mergeByAddress(Object.values(next)
+    .filter((l) => (l.bucket === 'dislike' ? !l.goneAt : (!l.offPortal || l.offReason === 'removed' || l.offReason === 'hidden'))))
     .map(({ detailAt, index, photosAt, ...rest }) => rest)
     .sort((a, b) => a.id.localeCompare(b.id));
   // Which fields changed per listing (for the log), so churn is easy to spot.
